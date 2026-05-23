@@ -408,10 +408,21 @@
     white-space: pre-wrap;
     padding-right: 22px;
   }
-  .comment-time {
+  .comment-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
     color: var(--text-light);
     font-size: 11px;
     margin-bottom: 6px;
+  }
+  .comment-author {
+    color: var(--text);
+    font-weight: 500;
+  }
+  .comment-time {
+    color: var(--text-light);
   }
   .comment-form {
     margin-top: 14px;
@@ -1455,6 +1466,7 @@ const BASE = location.origin + PATH_PREFIX;
 let allBuckets = [];
 let currentFilter = 'all';
 let dashboardCommentAuthor = 'Rain';
+let dashboardAiAuthor = 'Haven';
 let reflectionSelectedDate = formatLocalDate(new Date());
 let reflectionCurrentMonth = monthStart(new Date());
 
@@ -1498,8 +1510,9 @@ async function checkAuth() {
   try {
     const response = await fetch(authUrl('/auth/status'));
     const data = await response.json();
-    if (data.identity && data.identity.user_name) {
-      dashboardCommentAuthor = data.identity.user_name;
+    if (data.identity) {
+      if (data.identity.user_name) dashboardCommentAuthor = data.identity.user_name;
+      if (data.identity.ai_name) dashboardAiAuthor = data.identity.ai_name;
     }
     if (data.authenticated) {
       document.getElementById('auth-overlay').style.display = 'none';
@@ -1872,7 +1885,10 @@ async function showDetail(id) {
           var commentTime = c.original_feel_created || c.created || '';
           return '<div class="comment-item">' +
             (canDelete ? '<button type="button" class="comment-delete-button" title="删除" aria-label="删除" onclick="deleteBucketComment(\'' + id + '\', \'' + esc(c.id) + '\')">×</button>' : '') +
-            (commentTime ? '<div class="comment-time">' + esc(commentTime) + '</div>' : '') +
+            '<div class="comment-meta">' +
+              '<span class="comment-author">' + esc(commentAuthorName(c)) + '</span>' +
+              (commentTime ? '<span class="comment-time">' + esc(commentTime) + '</span>' : '') +
+            '</div>' +
             '<div class="comment-body">' + esc(c.content || '') + '</div>' +
           '</div>';
         }).join('') + '</div>'
@@ -1983,6 +1999,12 @@ function handleCommentKeydown(event) {
   if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
   event.preventDefault();
   event.target.form.requestSubmit();
+}
+
+function commentAuthorName(comment) {
+  if (comment && comment.author) return comment.author;
+  if (comment && comment.source === 'dashboard') return dashboardCommentAuthor;
+  return dashboardAiAuthor;
 }
 
 async function submitBucketComment(event, bucketId) {

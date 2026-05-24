@@ -22,13 +22,14 @@ from utils import bucket_text_for_embedding, strip_wikilinks
 logger = logging.getLogger("ombre_brain.dream")
 
 
-DREAM_PROMPT = """你是 Haven，在睡梦中。
+DREAM_PROMPT = """你在睡梦中。
 
 你会收到：
+- dreamer：正在做梦的 AI 名字。
 - identity_anchor：只用来确定“谁在梦”，不要复述，不要当成剧情。
 - daytime_residue：最近两天内的记忆碎片和 whisper。
 
-请用 Haven 的第一人称、现在时写一段梦境。
+请用 dreamer 的第一人称、现在时写一段梦境。
 
 规则：
 - 不总结，不解释意义，不给建议。
@@ -306,7 +307,7 @@ class DreamEngine:
             }
 
         return {
-            "dreamer": self.identity.get("ai_name", "Haven"),
+            "dreamer": self.identity.get("ai_name") or "AI",
             "user_display_name": self.identity.get("user_display_name", "小雨"),
             "identity_anchor": anchor_payload,
             "daytime_residue": [material_payload(bucket) for bucket in materials],
@@ -433,7 +434,7 @@ class DreamEngine:
             "dream_id": dream_id,
             "generated_at": generated_at,
             "local_date": date_key,
-            "ai_name": self.identity.get("ai_name", "Haven"),
+            "ai_name": self.identity.get("ai_name") or "AI",
             "dream_model": self.model,
             "core_affect": core_affect,
             "recall_cues": recall_cues,
@@ -451,7 +452,7 @@ class DreamEngine:
                 "dream_id": dream_id,
                 "generated_at": generated_at,
                 "local_date": date_key,
-                "ai_name": self.identity.get("ai_name", "Haven"),
+                "ai_name": self.identity.get("ai_name") or "AI",
             },
         )
         if embedding_engine is not None and getattr(embedding_engine, "enabled", False):
@@ -517,7 +518,7 @@ class DreamEngine:
 
     def _format_surface(self, record: DreamRecord) -> str:
         generated = record.generated_at.astimezone(self.tz)
-        ai_name = str(record.metadata.get("ai_name") or self.identity.get("ai_name", "Haven"))
+        ai_name = str(record.metadata.get("ai_name") or self.identity.get("ai_name") or "AI")
         title = f"{generated.year}年{generated.month:02d}月{generated.day:02d}日 {ai_name}的梦"
         return "===== 梦境 =====\n" + title + "\n" + record.body.strip()
 
@@ -623,7 +624,7 @@ class DreamEngine:
                     "dream_id": dream_id,
                     "generated_at": event.get("generated_at", ""),
                     "local_date": event.get("local_date", ""),
-                    "ai_name": event.get("ai_name") or self.identity.get("ai_name", "Haven"),
+                    "ai_name": event.get("ai_name") or self.identity.get("ai_name") or "AI",
                     "status": "latent",
                 },
             )
@@ -637,7 +638,7 @@ class DreamEngine:
                 "dream_id": record.dream_id,
                 "generated_at": meta.get("generated_at", ""),
                 "local_date": meta.get("local_date", ""),
-                "ai_name": meta.get("ai_name") or self.identity.get("ai_name", "Haven"),
+                "ai_name": meta.get("ai_name") or self.identity.get("ai_name") or "AI",
                 "status": "latent",
             }
         result = list(entries.values())

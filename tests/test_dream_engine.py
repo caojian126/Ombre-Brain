@@ -120,6 +120,7 @@ async def test_run_due_skips_outside_east_eight_dream_window(test_config):
 @pytest.mark.asyncio
 async def test_dream_model_disables_thinking_by_default(test_config):
     cfg = _dream_config(test_config, api_key="fake")
+    cfg["identity"] = {"ai_name": "Ombre", "user_display_name": "小雨"}
     engine = DreamEngine(cfg)
     calls = []
 
@@ -136,10 +137,13 @@ async def test_dream_model_disables_thinking_by_default(test_config):
 
     engine.client = SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions()))
 
-    text = await engine._call_dream_model({"daytime_residue": []})
+    payload = engine._payload_for([], None)
+    text = await engine._call_dream_model(payload)
 
     assert text == "我站在一段发亮的雨声里。"
     assert calls[0]["extra_body"] == {"thinking": {"type": "disabled"}}
+    assert "Haven" not in calls[0]["messages"][0]["content"]
+    assert '"dreamer": "Ombre"' in calls[0]["messages"][1]["content"]
 
 
 @pytest.mark.asyncio

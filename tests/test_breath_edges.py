@@ -226,7 +226,7 @@ async def test_search_appends_related_memory_and_touches_only_matched_bucket(pat
     assert "[bucket_id:B]" in result
     assert "背景联想，不代表当前事实" in result
     assert "当时语境" not in result
-    assert server.memory_node_store.get("B") is not None
+    assert server.memory_moment_store.list_for_bucket("B")
     assert bucket_mgr.touched == ["A"]
 
 
@@ -307,6 +307,44 @@ async def test_inspect_moments_indexes_bucket_sections_and_comments(patch_breath
 
 
 @pytest.mark.asyncio
+async def test_search_direct_moment_includes_neighbor_context_and_temperature(patch_breath):
+    import server
+
+    bucket = _bucket(
+        "A",
+        "\n".join(
+            [
+                "## context",
+                "开头写了事情经过。",
+                "",
+                "## original",
+                "小雨说：99 不是晚安，是长长久久。",
+                "",
+                "## feeling",
+                "这里的味道不能被摘要抹平。",
+                "",
+                "### affect_anchor",
+                "> 小雨把旧信放到桌上。",
+            ]
+        ),
+        score=10.0,
+    )
+    bucket_mgr = patch_breath([bucket], search_ids=["A"])
+
+    result = await server.breath(query="99 长长久久", max_tokens=500, include_related=False)
+
+    assert "=== 直接命中记忆 ===" in result
+    assert "[moment_id:" in result
+    assert "original" in result
+    assert "99 不是晚安" in result
+    assert "语境:" in result
+    assert "开头写了事情经过" in result
+    assert "不能被摘要抹平" in result
+    assert "affect_anchor" in result
+    assert bucket_mgr.touched == ["A"]
+
+
+@pytest.mark.asyncio
 async def test_search_diffuses_memory_across_two_hops_with_context(patch_breath):
     import server
 
@@ -349,7 +387,7 @@ async def test_diffused_memory_uses_compact_summary_not_full_json(patch_breath, 
     result = await server.breath(query="A", max_tokens=500)
     diffused_block = result.split("=== 联想浮现 ===", 1)[1]
 
-    assert "B short summary" in diffused_block
+    assert "B related event context" in diffused_block
     assert "core_facts" not in diffused_block
     assert "todos" not in diffused_block
     assert "keywords" not in diffused_block

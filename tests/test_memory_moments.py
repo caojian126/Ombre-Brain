@@ -155,3 +155,32 @@ def test_bulk_upsert_replaces_stale_bucket_rows(test_config):
     assert moments[0]["text"] == "新原文"
     assert store.stats()["buckets"] == 1
     assert store.stats()["moments"] == 1
+
+
+def test_moment_store_builds_context_and_temperature_edges(test_config):
+    store = MemoryMomentStore(test_config)
+    bucket = _bucket(
+        "graph",
+        "\n".join(
+            [
+                "## context",
+                "开头背景。",
+                "",
+                "## original",
+                "小雨说：99。",
+                "",
+                "### affect_anchor",
+                "> 小雨把旧信放到桌上。",
+            ]
+        ),
+    )
+
+    moments = store.upsert_bucket(bucket)
+    edges = store.list_edges("graph")
+    edge_types = {edge["relation_type"] for edge in edges}
+
+    assert [moment["section"] for moment in moments] == ["context", "original", "affect_anchor"]
+    assert "next_context" in edge_types
+    assert "previous_context" in edge_types
+    assert "emotional_echo" in edge_types
+    assert store.stats()["edges"] == len(edges)

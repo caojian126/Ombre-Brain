@@ -95,6 +95,26 @@ class MemoryMomentStore:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_memory_moments_bucket ON memory_moments(bucket_id, ordinal)"
         )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS memory_moment_edges (
+                source TEXT NOT NULL,
+                target TEXT NOT NULL,
+                bucket_id TEXT NOT NULL,
+                relation_type TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                reason TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(source, target, relation_type)
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_moment_edges_source ON memory_moment_edges(source)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_memory_moment_edges_target ON memory_moment_edges(target)"
+        )
         conn.commit()
         conn.close()
 
@@ -138,6 +158,89 @@ class MemoryMomentStore:
         conn.close()
         return [self._row_to_moment(row) for row in rows]
 
+    def list_all(self, limit: int = 10000) -> list[dict]:
+        conn = self._connect()
+        rows = conn.execute(
+            """
+            SELECT * FROM memory_moments
+            ORDER BY bucket_id ASC, ordinal ASC
+            LIMIT ?
+            """,
+            (max(1, int(limit)),),
+        ).fetchall()
+        conn.close()
+        return [self._row_to_moment(row) for row in rows]
+
+    def get(self, moment_id: str) -> dict | None:
+        moment_id = str(moment_id or "").strip()
+        if not moment_id:
+            return None
+        conn = self._connect()
+        row = conn.execute(
+            "SELECT * FROM memory_moments WHERE moment_id = ?",
+            (moment_id,),
+        ).fetchone()
+        conn.close()
+        return self._row_to_moment(row) if row else None
+
+    def list_edges(self, bucket_id: str = "") -> list[dict]:
+        conn = self._connect()
+        if bucket_id:
+            rows = conn.execute(
+                """
+                SELECT * FROM memory_moment_edges
+                WHERE bucket_id = ?
+                ORDER BY source ASC, target ASC
+                """,
+                (str(bucket_id),),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT * FROM memory_moment_edges
+                ORDER BY bucket_id ASC, source ASC, target ASC
+                """
+            ).fetchall()
+        conn.close()
+        return [dict(row) for row in rows]
+
+    def search_moments(
+        self,
+        query: str,
+        *,
+        limit: int = 20,
+        bucket_boosts: dict[str, float] | None = None,
+    ) -> list[dict]:
+        query = str(query or "").strip()
+        if not query:
+            return []
+        bucket_boosts = bucket_boosts or {}
+        scored = []
+        for moment in self.list_all():
+            score = _moment_query_score(moment, query)
+            bucket_id = str(moment.get("bucket_id") or "")
+            try:
+                boost = float(bucket_boosts.get(bucket_id, 0.0))
+            except (TypeError, ValueError):
+                boost = 0.0
+            if boost > 0:
+                score = max(score, min(boost, 1.0) * 0.75)
+            if score <= 0:
+                continue
+            item = dict(moment)
+            item["score"] = round(score, 4)
+            scored.append(item)
+
+        scored.sort(
+            key=lambda item: (
+                item.get("score", 0.0),
+                _moment_section_weight(item.get("section")),
+                _metadata_float(item.get("metadata", {}), "bucket_importance", 5.0),
+            ),
+            reverse=True,
+        )
+        return scored[: max(1, int(limit))]
+
     def sample(self, limit: int = 20) -> list[dict]:
         conn = self._connect()
         rows = conn.execute(
@@ -161,14 +264,19 @@ class MemoryMomentStore:
             FROM memory_moments
             """
         ).fetchone()
+        edge_row = conn.execute(
+            "SELECT COUNT(*) AS edge_count FROM memory_moment_edges"
+        ).fetchone()
         conn.close()
         return {
             "buckets": int(row["bucket_count"] or 0),
             "moments": int(row["moment_count"] or 0),
+            "edges": int(edge_row["edge_count"] or 0),
         }
 
     def _replace_bucket(self, conn: sqlite3.Connection, bucket_id: str, moments: list[dict]) -> None:
         conn.execute("DELETE FROM memory_moments WHERE bucket_id = ?", (bucket_id,))
+        conn.execute("DELETE FROM memory_moment_edges WHERE bucket_id = ?", (bucket_id,))
         for moment in moments:
             conn.execute(
                 """
@@ -189,6 +297,23 @@ class MemoryMomentStore:
                     moment["metadata_json"],
                     moment["created_at"],
                     moment["updated_at"],
+                ),
+            )
+        for edge in build_moment_edges(moments):
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO memory_moment_edges
+                (source, target, bucket_id, relation_type, confidence, reason, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    edge["source"],
+                    edge["target"],
+                    edge["bucket_id"],
+                    edge["relation_type"],
+                    edge["confidence"],
+                    edge["reason"],
+                    edge["created_at"],
                 ),
             )
 
@@ -276,6 +401,73 @@ def parse_bucket_moments(bucket: dict) -> list[dict]:
     return moments
 
 
+def build_moment_edges(moments: list[dict]) -> list[dict]:
+    ordered = sorted(
+        [moment for moment in moments if moment.get("moment_id")],
+        key=lambda item: int(item.get("ordinal", 0)),
+    )
+    if not ordered:
+        return []
+
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    edges: list[dict] = []
+    for left, right in zip(ordered, ordered[1:]):
+        edges.append(
+            _make_edge(
+                left,
+                right,
+                "next_context",
+                0.85,
+                "same bucket next moment",
+                now,
+            )
+        )
+        edges.append(
+            _make_edge(
+                right,
+                left,
+                "previous_context",
+                0.75,
+                "same bucket previous moment",
+                now,
+            )
+        )
+
+    anchor = _first_content_moment(ordered)
+    if anchor:
+        for moment in ordered:
+            section = str(moment.get("section") or "")
+            if section not in {"affect_anchor", "favorite_reason", "comment"}:
+                continue
+            if moment["moment_id"] == anchor["moment_id"]:
+                continue
+            edges.append(
+                _make_edge(
+                    moment,
+                    anchor,
+                    "emotional_echo",
+                    0.9,
+                    f"{section} points back to source moment",
+                    now,
+                )
+            )
+        for moment in ordered:
+            section = str(moment.get("section") or "")
+            if section != "feeling" or moment["moment_id"] == anchor["moment_id"]:
+                continue
+            edges.append(
+                _make_edge(
+                    moment,
+                    anchor,
+                    "reflects_on",
+                    0.8,
+                    "feeling reflects source moment",
+                    now,
+                )
+            )
+    return _dedupe_edges(edges)
+
+
 def _content_moments(bucket_id: str, content: str, base_meta: dict, updated_at: str) -> list[dict]:
     blocks = _split_markdown_blocks(content)
     if not any(_canonical_section(block["heading"]) for block in blocks if block["heading"]):
@@ -336,6 +528,43 @@ def _split_markdown_blocks(content: str) -> list[dict]:
             }
         )
     return blocks
+
+
+def _make_edge(
+    source: dict,
+    target: dict,
+    relation_type: str,
+    confidence: float,
+    reason: str,
+    created_at: str,
+) -> dict:
+    return {
+        "source": source["moment_id"],
+        "target": target["moment_id"],
+        "bucket_id": source["bucket_id"],
+        "relation_type": relation_type,
+        "confidence": confidence,
+        "reason": reason,
+        "created_at": created_at,
+    }
+
+
+def _first_content_moment(moments: list[dict]) -> dict | None:
+    for section in ("original", "moment", "fact", "body", "context"):
+        for moment in moments:
+            if moment.get("section") == section:
+                return moment
+    return moments[0] if moments else None
+
+
+def _dedupe_edges(edges: list[dict]) -> list[dict]:
+    deduped: dict[tuple[str, str, str], dict] = {}
+    for edge in edges:
+        key = (edge["source"], edge["target"], edge["relation_type"])
+        existing = deduped.get(key)
+        if not existing or float(edge.get("confidence", 0.0)) > float(existing.get("confidence", 0.0)):
+            deduped[key] = edge
+    return list(deduped.values())
 
 
 def _canonical_section(heading: str) -> str:
@@ -436,6 +665,84 @@ def _list_text(value: Any) -> list[str]:
     if value:
         return [str(value)]
     return []
+
+
+def _moment_query_score(moment: dict, query: str) -> float:
+    query = str(query or "").strip()
+    if not query:
+        return 0.0
+    text = str(moment.get("text") or "")
+    meta = moment.get("metadata", {}) if isinstance(moment.get("metadata"), dict) else {}
+    fields = " ".join(
+        [
+            text,
+            str(meta.get("bucket_name") or ""),
+            " ".join(_list_text(meta.get("bucket_tags"))),
+            " ".join(_list_text(meta.get("bucket_domain"))),
+        ]
+    ).lower()
+    query_lower = query.lower()
+    score = 0.0
+    if _term_matches_fields(query_lower, fields):
+        score += 0.65
+    terms = _query_terms(query)
+    if terms:
+        matched = sum(1 for term in terms if _term_matches_fields(term.lower(), fields))
+        score += min(0.5, matched / max(1, len(terms)) * 0.5)
+    if score <= 0:
+        return 0.0
+    score *= _moment_section_weight(moment.get("section"))
+    score += min(_metadata_float(meta, "bucket_importance", 5.0) / 10.0, 1.0) * 0.08
+    if meta.get("bucket_favorite") or meta.get("bucket_anchor"):
+        score += 0.06
+    return round(min(score, 1.5), 4)
+
+
+def _query_terms(query: str) -> list[str]:
+    raw = str(query or "").strip()
+    terms = [part for part in re.split(r"[\s,，。！？!?;；:：/\\|]+", raw) if part]
+    terms.extend(re.findall(r"[A-Za-z0-9_\-]+|[\u4e00-\u9fff]{1,}", raw))
+    seen = set()
+    unique = []
+    for term in terms:
+        key = term.lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        unique.append(term)
+    return unique
+
+
+def _term_matches_fields(term: str, fields: str) -> bool:
+    term = str(term or "").lower()
+    fields = str(fields or "").lower()
+    if not term:
+        return False
+    if re.fullmatch(r"[a-z0-9_]", term):
+        return re.search(rf"(?<![a-z0-9_]){re.escape(term)}(?![a-z0-9_])", fields) is not None
+    return term in fields
+
+
+def _moment_section_weight(section: Any) -> float:
+    return {
+        "original": 1.1,
+        "moment": 1.08,
+        "fact": 1.05,
+        "body": 1.0,
+        "context": 0.95,
+        "feeling": 0.9,
+        "followup": 0.88,
+        "affect_anchor": 0.82,
+        "favorite_reason": 0.82,
+        "comment": 0.78,
+    }.get(str(section or ""), 0.85)
+
+
+def _metadata_float(meta: dict, key: str, default: float) -> float:
+    try:
+        return float(meta.get(key, default))
+    except (TypeError, ValueError):
+        return default
 
 
 def _clean_text(value: Any) -> str:

@@ -1,5 +1,6 @@
 from memory_relevance import (
     active_facets,
+    content_terms_for_query,
     facets_for_node,
     facets_for_text,
     memory_relevance_options_from_config,
@@ -38,6 +39,19 @@ def test_non_sensitive_conflict_with_direct_evidence_is_demoted_not_suppressed()
     assert not decision.suppress
     assert 0 < decision.multiplier < 1
     assert "communication_action_vs_hardware_protocol_demoted" in decision.reasons
+
+
+def test_action_query_filters_hardware_protocol_without_direct_action_evidence():
+    decision = relevance_decision(
+        "小雨 发邮件",
+        {
+            "content": "BLE protocol note with notify char and device service UUID.",
+            "metadata": {"importance": 10},
+        },
+    )
+
+    assert decision.suppress
+    assert "communication_action_vs_hardware_protocol" in decision.reasons
 
 
 def test_explicit_intimacy_query_allows_intimacy_candidate():
@@ -87,3 +101,27 @@ def test_annotation_facets_drive_node_relevance_without_alias_text():
     assert not decision.suppress
     assert decision.multiplier > 1
     assert "facet_overlap" in decision.reasons
+
+
+def test_context_name_does_not_override_action_intent():
+    options = memory_relevance_options_from_config(
+        {"identity": {"ai_name": "Haven", "user_display_name": "小雨"}}
+    )
+
+    assert content_terms_for_query("小雨 发邮件", options) == ["发邮件"]
+
+    missing_action = relevance_decision(
+        "小雨 发邮件",
+        {"text": "小雨说月亮时进入工作模式。", "metadata": {"importance": 10}},
+        options,
+    )
+    email_action = relevance_decision(
+        "小雨 发邮件",
+        {"text": "QQ邮箱自动收发配置，可以给小雨发邮件。", "metadata": {"importance": 4}},
+        options,
+    )
+
+    assert missing_action.multiplier < 1
+    assert "communication_action_missing_demoted" in missing_action.reasons
+    assert email_action.multiplier > 1
+    assert "facet_overlap" in email_action.reasons

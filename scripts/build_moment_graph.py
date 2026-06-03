@@ -28,6 +28,19 @@ from utils import load_config
 GENERATED_REASON_PREFIX = "local_graph:"
 DEFAULT_STATE_NAME = "moment_graph_worker.json"
 WEAK_TERMS = {
+    "todo",
+    "done",
+    "wish",
+    "commitment",
+    "emotional_echo",
+    "project_event",
+    "relationship_event",
+    "family_milestone",
+    "task_status_signal",
+    "old_or_resolved",
+    "resolved",
+    "digested",
+    "archive",
     "记忆",
     "回忆",
     "上下文",
@@ -44,6 +57,8 @@ WEAK_TERMS = {
     "recent",
     "status",
 }
+WEAK_TERM_PREFIXES = ("flavor_",)
+WEAK_GRAPH_FACETS = {"old_or_resolved"}
 
 
 @dataclass(frozen=True)
@@ -203,21 +218,23 @@ def pair_score(source: IndexedMoment, target: IndexedMoment) -> tuple[float, lis
     score = 0.0
     reason = []
     term_overlap = source.terms & target.terms
+    if not has_term_evidence(term_overlap):
+        return 0.0, []
     if term_overlap:
-        term_score = min(0.5, len(term_overlap) / math.sqrt(max(1, len(source.terms) * len(target.terms))))
-        score += 0.28 + term_score
+        term_score = min(0.46, len(term_overlap) / math.sqrt(max(1, len(source.terms) * len(target.terms))))
+        score += 0.24 + term_score
         reason.append("terms=" + ",".join(sorted(term_overlap)[:5]))
     facet_overlap = source.facets & target.facets
     if facet_overlap:
-        score += min(0.32, 0.18 + 0.08 * len(facet_overlap))
+        score += min(0.28, 0.16 + 0.06 * len(facet_overlap))
         reason.append("facets=" + ",".join(sorted(facet_overlap)[:5]))
     tag_overlap = source.tags & target.tags
     if tag_overlap:
-        score += min(0.18, 0.08 + 0.03 * len(tag_overlap))
+        score += min(0.1, 0.04 + 0.02 * len(tag_overlap))
         reason.append("tags=" + ",".join(sorted(tag_overlap)[:4]))
     domain_overlap = source.domains & target.domains
     if domain_overlap:
-        score += min(0.12, 0.06 + 0.02 * len(domain_overlap))
+        score += min(0.06, 0.03 + 0.01 * len(domain_overlap))
         reason.append("domains=" + ",".join(sorted(domain_overlap)[:3]))
     if preferred_section(source.moment) and preferred_section(target.moment):
         score += 0.04
@@ -225,7 +242,8 @@ def pair_score(source: IndexedMoment, target: IndexedMoment) -> tuple[float, lis
 
 
 def relation_type_for(score: float, source: IndexedMoment, target: IndexedMoment) -> str:
-    if score >= 0.82 and source.facets & target.facets and source.terms & target.terms:
+    term_overlap = source.terms & target.terms
+    if score >= 0.82 and source.facets & target.facets and len(term_overlap) >= 2:
         return "same_event"
     if source.facets & target.facets:
         return "context_of"
@@ -239,8 +257,6 @@ def moment_terms(moment: dict[str, Any], options: MemoryRelevanceOptions) -> set
             str(moment.get("text") or ""),
             str(meta.get("annotation_summary") or ""),
             str(meta.get("bucket_name") or ""),
-            " ".join(str(item) for item in meta.get("bucket_tags", []) or []),
-            " ".join(str(item) for item in meta.get("bucket_domain", []) or []),
         ]
     )
     terms = content_terms_for_query(fields, options)
@@ -258,8 +274,11 @@ def moment_facets(moment: dict[str, Any]) -> set[str]:
             score = float(value)
         except (TypeError, ValueError):
             continue
+        facet_name = str(facet)
+        if facet_name in WEAK_GRAPH_FACETS:
+            continue
         if score >= 0.35:
-            facets.add(str(facet))
+            facets.add(facet_name)
     return facets
 
 
@@ -272,7 +291,7 @@ def metadata_set(moment: dict[str, Any], key: str) -> set[str]:
         items = list(value)
     else:
         items = []
-    return {normalize_term(item) for item in items if keep_term(item)}
+    return {normalize_term(item) for item in items if keep_metadata_term(item)}
 
 
 def preferred_section(moment: dict[str, Any]) -> bool:
@@ -283,11 +302,49 @@ def keep_term(value: Any) -> bool:
     term = normalize_term(value)
     if not term or term in WEAK_TERMS:
         return False
+    if any(term.startswith(prefix) for prefix in WEAK_TERM_PREFIXES):
+        return False
+    if not re.search(r"[a-zA-Z\u4e00-\u9fff]", term):
+        return False
+    if re.fullmatch(r"0x[0-9a-f]+", term):
+        return False
+    if re.fullmatch(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}", term):
+        return False
     if re.fullmatch(r"[a-z0-9_:-]+", term) and len(term) < 3:
         return False
     if re.fullmatch(r"[\u4e00-\u9fff]+", term) and len(term) < 2:
         return False
     return True
+
+
+def keep_metadata_term(value: Any) -> bool:
+    term = normalize_term(value)
+    if not keep_term(term):
+        return False
+    if term in WEAK_TERMS:
+        return False
+    if any(term.startswith(prefix) for prefix in WEAK_TERM_PREFIXES):
+        return False
+    return True
+
+
+def has_term_evidence(terms: set[str]) -> bool:
+    if len(terms) >= 2:
+        return True
+    return any(is_anchor_term(term) for term in terms)
+
+
+def is_anchor_term(term: str) -> bool:
+    value = normalize_term(term)
+    if not keep_term(value):
+        return False
+    if re.search(r"\d", value):
+        return True
+    if re.fullmatch(r"[a-z][a-z0-9_-]{2,}", value):
+        return True
+    if re.fullmatch(r"[\u4e00-\u9fff]{3,}", value):
+        return True
+    return False
 
 
 def normalize_term(value: Any) -> str:

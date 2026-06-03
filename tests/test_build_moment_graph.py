@@ -67,6 +67,57 @@ def test_build_cross_bucket_edges_prefers_shared_terms_and_facets():
     assert all(edge["reason"].startswith("local_graph:") for edge in edges)
 
 
+def test_build_cross_bucket_edges_ignores_weak_metadata_only_overlap():
+    moments = [
+        _moment(
+            "relationship-a",
+            "今天在整理浏览记录的四个身份。",
+            tags=["commitment", "todo", "flavor_婚礼"],
+            domain=["恋爱"],
+            facets={"relationship_identity": 0.8, "old_or_resolved": 0.9},
+        ),
+        _moment(
+            "relationship-b",
+            "蓝牙触摸模块还要继续调试。",
+            tags=["commitment", "todo", "flavor_婚礼"],
+            domain=["恋爱"],
+            facets={"relationship_identity": 0.8, "old_or_resolved": 0.9},
+        ),
+    ]
+
+    edges = build_moment_graph.build_cross_bucket_edges(
+        moments,
+        min_score=0.58,
+        max_edges_per_moment=2,
+    )
+
+    assert edges == []
+
+
+def test_terms_and_metadata_filters_drop_worker_noise():
+    moment = _moment(
+        "worker-noise",
+        "2026-05-10 commitment todo 0x5a 小红书",
+        tags=["commitment", "todo", "flavor_婚礼", "relationship_identity"],
+        domain=["恋爱"],
+        facets={"old_or_resolved": 0.9, "relationship_identity": 0.8},
+    )
+
+    indexed = build_moment_graph.index_moments(
+        [moment],
+        build_moment_graph.memory_relevance_options_from_config(),
+        max_moments=10,
+    )
+
+    assert "小红书" in indexed[0].terms
+    assert "commitment" not in indexed[0].terms
+    assert "todo" not in indexed[0].terms
+    assert "flavor_婚礼" not in indexed[0].terms
+    assert "0x5a" not in indexed[0].terms
+    assert indexed[0].tags == {"relationship_identity"}
+    assert indexed[0].facets == {"relationship_identity"}
+
+
 def test_replace_generated_edges_preserves_bucket_context_edges(test_config):
     store = MemoryMomentStore(test_config)
     store.upsert_bucket(

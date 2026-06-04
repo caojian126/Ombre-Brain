@@ -276,6 +276,39 @@ class MemoryMomentStore:
         conn.close()
         return written
 
+    def delete_bucket(self, bucket_id: str) -> dict:
+        bucket_id = str(bucket_id or "").strip()
+        if not bucket_id:
+            return {"moments": 0, "edges": 0}
+
+        escaped = (
+            bucket_id
+            .replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
+        moment_prefix = f"{escaped}:%"
+        conn = self._connect()
+        edge_cursor = conn.execute(
+            """
+            DELETE FROM memory_moment_edges
+            WHERE bucket_id = ?
+               OR source LIKE ? ESCAPE '\\'
+               OR target LIKE ? ESCAPE '\\'
+            """,
+            (bucket_id, moment_prefix, moment_prefix),
+        )
+        moment_cursor = conn.execute(
+            "DELETE FROM memory_moments WHERE bucket_id = ?",
+            (bucket_id,),
+        )
+        conn.commit()
+        conn.close()
+        return {
+            "moments": max(0, int(moment_cursor.rowcount or 0)),
+            "edges": max(0, int(edge_cursor.rowcount or 0)),
+        }
+
     def search_moments(
         self,
         query: str,

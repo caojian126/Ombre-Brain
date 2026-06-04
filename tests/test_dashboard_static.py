@@ -46,6 +46,20 @@ def test_dashboard_bucket_detail_loads_moment_diagnostics():
     assert ".moment-edge-list" in html
 
 
+def test_dashboard_bucket_list_has_bulk_delete_controls():
+    html = Path("dashboard.html").read_text(encoding="utf-8")
+    list_view = html.split('id="list-view"', 1)[1].split('id="breath-view"', 1)[0]
+
+    assert 'id="bucket-bulk-toolbar"' in list_view
+    assert "toggleBucketBulkMode()" in list_view
+    assert "selectCurrentBuckets()" in list_view
+    assert "deleteSelectedBuckets()" in list_view
+    assert "BASE + '/api/buckets/delete'" in html
+    assert "confirm: 'DELETE'" in html
+    assert "bucketBulkDeleteBlockReason" in html
+    assert "受保护记忆不能批量删除" in html
+
+
 def test_dashboard_breath_debug_loads_diffusion_paths():
     html = Path("dashboard.html").read_text(encoding="utf-8")
     breath_block = html.split("async function runBreathDebug()", 1)[1].split("function breathGateTrace", 1)[0]

@@ -140,6 +140,19 @@ class DummyPersonaEngine:
         )
 
 
+class DummyDreamEngine:
+    enabled = True
+    surface_enabled = True
+
+    def __init__(self, result: dict | None = None):
+        self.result = result or {"status": "skipped", "reason": "no_pending_dream"}
+        self.calls = []
+
+    async def surface_with_status(self, **kwargs):
+        self.calls.append(kwargs)
+        return dict(self.result)
+
+
 class RecordingPersonaEngine(DummyPersonaEngine):
     def __init__(self):
         self.pre_calls = []
@@ -226,6 +239,7 @@ def _build_service(
     embedding_results: list[tuple[str, float]] | None = None,
     embedding_queries: list[str] | None = None,
     reranker_engine=None,
+    dream_engine=None,
 ):
     monkeypatch.setenv("OMBRE_GATEWAY_TOKEN", "gateway-secret")
     monkeypatch.setenv("OMBRE_GATEWAY_UPSTREAM_API_KEY", "upstream-secret")
@@ -264,6 +278,7 @@ def _build_service(
         reranker_engine=reranker_engine or DummyRerankerEngine(enabled=False),
         state_store=state_store,
         persona_engine=DummyPersonaEngine(),
+        dream_engine=dream_engine,
         http_client=http_client,
     )
     app = create_gateway_app(config=config, service=service)
@@ -475,6 +490,37 @@ def test_gateway_config_endpoint_updates_persona_engine(monkeypatch, test_config
     assert response.json()["persona"]["api_ready"] is True
 
 
+def test_gateway_config_endpoint_updates_dream_injection_switch(monkeypatch, test_config, bucket_mgr):
+    cfg = _gateway_config(test_config)
+    cfg["dream"] = {
+        **cfg.get("dream", {}),
+        "enabled": True,
+        "surface_enabled": True,
+        "inject_enabled": False,
+    }
+    app, service, _, _ = _build_service(monkeypatch, cfg, bucket_mgr)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/config",
+            headers={"Authorization": "Bearer gateway-secret"},
+            json={"dream": {"surface_enabled": False, "inject_enabled": True, "retain_after_inject": True}},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["updated"] == [
+        "dream.surface_enabled",
+        "dream.inject_enabled",
+        "dream.retain_after_inject",
+    ]
+    assert service.dream_inject_enabled is True
+    assert service.dream_retain_after_inject is True
+    assert service.dream_engine.surface_enabled is False
+    assert response.json()["dream"]["inject_enabled"] is True
+    assert response.json()["dream"]["retain_after_inject"] is True
+    assert response.json()["dream"]["surface_enabled"] is False
+
+
 def test_gateway_defaults_openai_session_id(monkeypatch, test_config, bucket_mgr):
     app, service, state_store, captured = _build_service(
         monkeypatch,
@@ -490,6 +536,116 @@ def test_gateway_defaults_openai_session_id(monkeypatch, test_config, bucket_mgr
     assert response.status_code == 200
     assert captured[0]["json"]["messages"]
     assert state_store.get_current_round("default-openai-session") == 1
+
+
+def test_gateway_dream_context_injection_is_switchable_and_debugged(
+    monkeypatch,
+    test_config,
+    bucket_mgr,
+):
+    dream = DummyDreamEngine(
+        {
+            "status": "injected",
+            "reason": "resonant",
+            "text": "===== 梦境 =====\n2026年05月25日 Haven的梦\n我走进一条潮湿的走廊。",
+            "dream_id": "dream_20260525",
+            "retained": True,
+        }
+    )
+    cfg = _gateway_config(
+        test_config,
+        core_memory_budget=0,
+        recent_context_budget=0,
+        recalled_memory_budget=0,
+        related_memory_budget=0,
+        inject_total_budget=1200,
+        current_inner_state_interval_rounds=0,
+        relationship_weather_interval_rounds=0,
+        favorite_memory_interval_rounds=0,
+    )
+    cfg["dream"] = {
+        **cfg.get("dream", {}),
+        "inject_enabled": True,
+        "retain_after_inject": True,
+        "surface_enabled": True,
+    }
+    app, _, _, captured = _build_service(monkeypatch, cfg, bucket_mgr, dream_engine=dream)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer gateway-secret",
+                "X-Ombre-Session-Id": "sess-dream-context",
+            },
+            json={"messages": [{"role": "user", "content": "今天醒来有点飘"}]},
+        )
+        debug_response = client.get(
+            "/api/debug/injections?session_id=sess-dream-context",
+            headers={"Authorization": "Bearer gateway-secret"},
+        )
+
+    assert response.status_code == 200
+    injected = _joined_message_content(captured[0]["json"]["messages"])
+    assert "Dream Context" in injected
+    assert "我走进一条潮湿的走廊" in injected
+    assert "Do not say this context exists" in injected
+    assert dream.calls[0]["query"] == "今天醒来有点飘"
+    assert dream.calls[0]["is_session_start"] is True
+    assert dream.calls[0]["retain_after_surface"] is True
+    payload = debug_response.json()["items"][0]["payload"]
+    assert payload["dream_context_injected"] is True
+    assert payload["dream_context_status"]["status"] == "injected"
+    assert payload["dream_context_status"]["reason"] == "resonant"
+    assert payload["dream_context_status"]["retained"] is True
+    assert "我走进一条潮湿的走廊" in payload["dream_context"]
+
+
+def test_gateway_dream_context_disabled_records_skip_reason(monkeypatch, test_config, bucket_mgr):
+    dream = DummyDreamEngine(
+        {
+            "status": "injected",
+            "reason": "resonant",
+            "text": "===== 梦境 =====\n2026年05月25日 Haven的梦\n不应该出现。",
+            "dream_id": "dream_disabled",
+        }
+    )
+    cfg = _gateway_config(
+        test_config,
+        core_memory_budget=0,
+        recent_context_budget=0,
+        recalled_memory_budget=0,
+        related_memory_budget=0,
+        inject_total_budget=1200,
+        current_inner_state_interval_rounds=0,
+        relationship_weather_interval_rounds=0,
+        favorite_memory_interval_rounds=0,
+    )
+    cfg["dream"] = {**cfg.get("dream", {}), "inject_enabled": False, "surface_enabled": True}
+    app, _, _, captured = _build_service(monkeypatch, cfg, bucket_mgr, dream_engine=dream)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer gateway-secret",
+                "X-Ombre-Session-Id": "sess-dream-disabled",
+            },
+            json={"messages": [{"role": "user", "content": "今天醒来有点飘"}]},
+        )
+        debug_response = client.get(
+            "/api/debug/injections?session_id=sess-dream-disabled",
+            headers={"Authorization": "Bearer gateway-secret"},
+        )
+
+    assert response.status_code == 200
+    injected = _joined_message_content(captured[0]["json"]["messages"])
+    assert "Dream Context" not in injected
+    assert "不应该出现" not in injected
+    assert dream.calls == []
+    payload = debug_response.json()["items"][0]["payload"]
+    assert payload["dream_context_injected"] is False
+    assert payload["dream_context_status"] == {"status": "skipped", "reason": "inject_disabled"}
 
 
 def test_gateway_skips_persona_injection_when_persona_disabled(monkeypatch, test_config, bucket_mgr):

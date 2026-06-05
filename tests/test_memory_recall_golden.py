@@ -204,6 +204,7 @@ def _run_gateway_recall_case(cfg: dict, bucket_mgr: BucketManager, case: dict[st
         relationship_weather="",
         favorite_memory="",
         related_memory=diffused_memory,
+        dream_context="",
     )
     return {
         "dynamic_context": dynamic_context,
@@ -228,6 +229,7 @@ def _run_diffused_block_case(cfg: dict, bucket_mgr: BucketManager, case: dict[st
         relationship_weather="",
         favorite_memory="",
         related_memory=block,
+        dream_context="",
     )
     return {"dynamic_context": dynamic_context, "recalled_memory": "", "diffused_memory": block}
 

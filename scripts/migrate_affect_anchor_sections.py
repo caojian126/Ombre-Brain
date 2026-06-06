@@ -101,8 +101,11 @@ class AnchorMigration:
             "proposed_moment": self.move_to_moment,
             "move_to_assistant_reflection": self.move_to_assistant_reflection,
             "proposed_assistant_reflection": self.move_to_assistant_reflection,
+            "move_to_reflection": self.move_to_assistant_reflection,
+            "proposed_reflection": self.move_to_assistant_reflection,
             "deduped_moment": self.deduped_moment,
             "deduped_assistant_reflection": self.deduped_assistant_reflection,
+            "deduped_reflection": self.deduped_assistant_reflection,
             "kept_affect_anchor": self.kept_affect_anchor,
             "proposed_kept_affect_anchor": self.kept_affect_anchor,
             "new_structure_preview": preview,
@@ -118,13 +121,85 @@ def sha256_text(text: str) -> str:
     return hashlib.sha256(str(text or "").encode("utf-8")).hexdigest()
 
 
+def normalized_bucket_type(bucket: dict[str, Any]) -> str:
+    meta = bucket.get("metadata", {}) if isinstance(bucket.get("metadata"), dict) else {}
+    raw_type = str(meta.get("type") or meta.get("bucket_type") or "").strip().lower()
+    if raw_type:
+        return "archived" if raw_type == "archive" else raw_type
+    path_parts = {
+        part.lower()
+        for part in str(bucket.get("path") or "").replace("\\", "/").split("/")
+        if part
+    }
+    for candidate in ("feel", "permanent", "dynamic", "archive"):
+        if candidate in path_parts:
+            return "archived" if candidate == "archive" else candidate
+    return "dynamic"
+
+
+def bucket_tags(bucket: dict[str, Any]) -> set[str]:
+    meta = bucket.get("metadata", {}) if isinstance(bucket.get("metadata"), dict) else {}
+    tags = meta.get("tags") or []
+    if isinstance(tags, str):
+        tags = [tags]
+    if not isinstance(tags, (list, tuple, set)):
+        return set()
+    return {str(tag).strip().lower() for tag in tags if str(tag).strip()}
+
+
+def is_profile_or_persona_bucket(bucket: dict[str, Any]) -> bool:
+    meta = bucket.get("metadata", {}) if isinstance(bucket.get("metadata"), dict) else {}
+    tags = bucket_tags(bucket)
+    source = str(meta.get("source") or "").strip().lower()
+    return (
+        "profile_fact" in tags
+        or any(tag.startswith("profile_") for tag in tags)
+        or any(tag.startswith("persona") for tag in tags)
+        or bool(meta.get("profile_kind") or meta.get("profile_predicate") or meta.get("persona_kind"))
+        or source in {"profile_fact", "persona", "persona_state"}
+    )
+
+
+def is_periodic_reflection_bucket(bucket: dict[str, Any]) -> bool:
+    meta = bucket.get("metadata", {}) if isinstance(bucket.get("metadata"), dict) else {}
+    bucket_id = str(bucket.get("id") or meta.get("id") or "").strip().lower()
+    period = str(meta.get("period") or "").strip().lower()
+    tags = bucket_tags(bucket)
+    return (
+        bucket_id.startswith("reflection_daily_")
+        or bucket_id.startswith("reflection_weekly_")
+        or period in {"daily", "weekly"}
+        or "daily_impression" in tags
+        or "weekly_impression" in tags
+    )
+
+
+def bucket_in_scope(bucket: dict[str, Any], scope: str = "ordinary") -> bool:
+    scope = str(scope or "ordinary").strip().lower()
+    if scope == "all":
+        return True
+    if is_profile_or_persona_bucket(bucket):
+        return False
+    meta = bucket.get("metadata", {}) if isinstance(bucket.get("metadata"), dict) else {}
+    bucket_type = normalized_bucket_type(bucket)
+    pinned_or_protected = bool(meta.get("pinned") or meta.get("protected"))
+    periodic = is_periodic_reflection_bucket(bucket)
+    if scope == "ordinary":
+        return bucket_type == "dynamic" and not pinned_or_protected and not periodic
+    if scope == "core":
+        return bucket_type == "permanent" or pinned_or_protected
+    if scope == "feel":
+        return bucket_type == "feel" or periodic
+    raise ValueError(f"unknown scope: {scope}")
+
+
 def canonical_heading(heading: str) -> str:
     raw = re.sub(r"\s+", " ", str(heading or "").strip()).lower()
     compact = re.sub(r"[\s_\-·:：/|（）()【】\[\]]+", "", raw)
     if raw in {"moment", "memory", "片段", "记忆片段"} or compact in {"moment", "memory", "片段", "记忆片段"}:
         return "moment"
     if raw in {"assistant_reflection", "assistant reflection", "haven_reflection", "haven reflection"}:
-        return "assistant_reflection"
+        return "reflection"
     if raw in {"favorite_reason", "favorite reason"} or compact in {
         "favorite_reason",
         "favoritereason",
@@ -133,7 +208,7 @@ def canonical_heading(heading: str) -> str:
         "喜欢它的原因",
         "喜欢的原因",
     }:
-        return "assistant_reflection"
+        return "reflection"
     if raw in {"reflection", "反思"} or compact in {"reflection", "反思"}:
         return "reflection"
     if raw in {"affect_anchor", "affect anchor"} or ("affect" in compact and "anchor" in compact):
@@ -170,7 +245,7 @@ def render_sections(sections: list[Section]) -> str:
     return "\n".join(lines).strip()
 
 
-def plan_bucket_migration(bucket: dict[str, Any]) -> AnchorMigration | None:
+def plan_bucket_migration(bucket: dict[str, Any], *, body_only_moment: str = "skip") -> AnchorMigration | None:
     meta = bucket.get("metadata", {}) if isinstance(bucket.get("metadata"), dict) else {}
     content = str(bucket.get("content") or "")
     sections = split_sections(content)
@@ -189,14 +264,14 @@ def plan_bucket_migration(bucket: dict[str, Any]) -> AnchorMigration | None:
         converted_reflections.extend(legacy_reflections)
         structural_changed = True
 
-    force_unheaded_moment = any(section.heading_line for section in sections)
     unheaded_reflections, unheaded_moments = normalize_unheaded_sections(
         sections,
-        force_moment=force_unheaded_moment,
     )
     reflection_candidates.extend(unheaded_reflections)
     if unheaded_reflections or unheaded_moments:
         converted_moments.extend(unheaded_moments)
+        structural_changed = True
+    if maybe_add_body_only_moment(bucket, sections, mode=body_only_moment):
         structural_changed = True
 
     for anchor_index in anchor_indexes:
@@ -217,7 +292,7 @@ def plan_bucket_migration(bucket: dict[str, Any]) -> AnchorMigration | None:
     existing_reflection_text = "\n\n".join(
         section.text()
         for section in sections
-        if section.canonical in {"assistant_reflection", "reflection"}
+        if section.canonical == "reflection"
     )
     moment_to_add, deduped_moment = dedupe_against(moment_candidates, existing_moment_text)
     reflection_to_add, deduped_reflection = dedupe_against(reflection_candidates, existing_reflection_text)
@@ -236,16 +311,18 @@ def plan_bucket_migration(bucket: dict[str, Any]) -> AnchorMigration | None:
             insert_index += 1
 
     if reflection_to_add:
-        target = first_section(sections, "assistant_reflection") or first_section(sections, "reflection")
+        target = first_section(sections, "reflection")
         if target:
             append_paragraphs(target, reflection_to_add)
         else:
             sections.insert(
                 insert_index,
-                Section("### assistant_reflection", "assistant_reflection", paragraphs_to_lines(reflection_to_add)),
+                Section("### reflection", "reflection", paragraphs_to_lines(reflection_to_add)),
             )
 
-    if merge_repeated_sections(sections, {"moment", "assistant_reflection"}):
+    if merge_repeated_sections(sections, {"moment", "reflection"}):
+        structural_changed = True
+    if standardize_section_headings_and_order(sections):
         structural_changed = True
 
     new_content = render_sections(sections)
@@ -282,6 +359,8 @@ def classify_anchor_lines(lines: list[str]) -> dict[str, list[str]]:
         if is_temperature_paragraph(paragraph):
             kept_paragraphs.append(paragraph)
             continue
+        if is_anchor_meaning_paragraph(text):
+            continue
         natural_seen += 1
         clean_text = strip_quote_prefixes(text)
         if is_reflection_paragraph(clean_text):
@@ -289,7 +368,7 @@ def classify_anchor_lines(lines: list[str]) -> dict[str, list[str]]:
         elif is_fact_paragraph(clean_text, natural_seen):
             moved_moment.append(clean_text)
         else:
-            kept_paragraphs.append(paragraph)
+            moved_moment.append(clean_text)
 
     return {
         "moment": moved_moment,
@@ -301,19 +380,19 @@ def classify_anchor_lines(lines: list[str]) -> dict[str, list[str]]:
 def normalize_legacy_reflection_sections(sections: list[Section]) -> list[str]:
     converted: list[str] = []
     for section in sections:
-        if section.canonical != "assistant_reflection":
+        if section.canonical != "reflection":
             continue
-        if section.heading_line.strip() == "### assistant_reflection":
+        if section.heading_line.strip() == "### reflection":
             continue
         text = section.text()
         if text:
             converted.append(text)
-        section.heading_line = "### assistant_reflection"
-        section.heading = "assistant_reflection"
+        section.heading_line = "### reflection"
+        section.heading = "reflection"
     return converted
 
 
-def normalize_unheaded_sections(sections: list[Section], *, force_moment: bool = False) -> tuple[list[str], list[str]]:
+def normalize_unheaded_sections(sections: list[Section]) -> tuple[list[str], list[str]]:
     moved_reflection: list[str] = []
     converted_moment: list[str] = []
     for section in sections:
@@ -342,18 +421,58 @@ def normalize_unheaded_sections(sections: list[Section], *, force_moment: bool =
                     kept_lines.append(line)
             if kept_lines:
                 kept.append("\n".join(kept_lines).strip())
-        should_convert_to_moment = bool(kept) and (force_moment or bool(moved_here))
-        if not moved_here and not should_convert_to_moment:
+        if not moved_here:
             continue
         moved_reflection.extend(moved_here)
-        if should_convert_to_moment:
-            section.heading_line = "### moment"
-            section.heading = "moment"
-            section.lines = paragraphs_to_lines(kept)
-            converted_moment.extend(kept)
-        else:
-            section.lines = []
+        section.lines = paragraphs_to_lines(kept)
     return moved_reflection, converted_moment
+
+
+def maybe_add_body_only_moment(bucket: dict[str, Any], sections: list[Section], *, mode: str = "skip") -> bool:
+    mode = str(mode or "skip").strip().lower()
+    if mode == "skip":
+        return False
+    if any(section.heading_line for section in sections) or len(sections) != 1:
+        return False
+    body = sections[0].text()
+    if not body:
+        return False
+    if mode == "title":
+        moment = body_only_title_moment(bucket) or first_sentence_moment(body)
+    elif mode == "first_sentence":
+        moment = first_sentence_moment(body)
+    else:
+        raise ValueError(f"unknown body_only_moment mode: {mode}")
+    if not moment or is_loose_duplicate(moment, "\n\n".join(section.text() for section in sections if section.canonical == "moment")):
+        return False
+    sections.append(Section("### moment", "moment", paragraphs_to_lines([moment])))
+    return True
+
+
+def body_only_title_moment(bucket: dict[str, Any]) -> str:
+    meta = bucket.get("metadata", {}) if isinstance(bucket.get("metadata"), dict) else {}
+    title = str(meta.get("name") or bucket.get("name") or "").strip()
+    bucket_id = str(bucket.get("id") or meta.get("id") or "").strip()
+    if not title or title == bucket_id or re.fullmatch(r"bucket[_-]?[a-z0-9]+", title, flags=re.I):
+        return ""
+    return truncate_moment(title)
+
+
+def first_sentence_moment(body: str) -> str:
+    text = re.sub(r"\s+", " ", str(body or "").strip())
+    if not text:
+        return ""
+    match = re.search(r"^(.{12,160}?[。！？!?])", text)
+    if match:
+        return truncate_moment(match.group(1))
+    return truncate_moment(text)
+
+
+def truncate_moment(text: str, limit: int = 96) -> str:
+    value = re.sub(r"\s+", " ", str(text or "").strip())
+    if len(value) <= limit:
+        return value
+    return value[:limit].rstrip("，,。；;：: ") + "。"
 
 
 def split_paragraphs(lines: list[str]) -> list[list[str]]:
@@ -393,20 +512,29 @@ def is_temperature_paragraph(lines: list[str]) -> bool:
     text = "\n".join(lines).strip()
     if not text:
         return True
-    first = lines[0].strip()
-    if first.startswith("含义：") or first.startswith("含义:"):
-        return True
-    if all(looks_like_chord_line(line) for line in lines if line.strip()):
-        return True
-    clean_text = strip_quote_prefixes(text)
-    if (
-        len(clean_text) <= 32
-        and not FACT_PREFIX_RE.search(clean_text)
-        and not FACT_MARKER_RE.search(clean_text)
-        and not REFLECTION_RE.search(clean_text)
-    ):
+    if all(looks_like_anchor_music_line(line) for line in lines if line.strip()):
         return True
     return False
+
+
+def is_anchor_meaning_paragraph(text: str) -> bool:
+    stripped = strip_quote_prefixes(text).lstrip()
+    return stripped.startswith("含义：") or stripped.startswith("含义:")
+
+
+def looks_like_anchor_music_line(line: str) -> bool:
+    text = str(line or "").strip()
+    if text.startswith(">"):
+        text = text[1:].strip()
+    if not text or re.search(r"[\u4e00-\u9fff]", text):
+        return False
+    if looks_like_chord_line(text):
+        return True
+    if not TEMPERATURE_MUSIC_RE.search(text):
+        return False
+    remainder = TEMPERATURE_MUSIC_RE.sub("", text)
+    remainder = re.sub(r"[-→>·|/(),.:;_\s]+", "", remainder)
+    return not remainder
 
 
 def looks_like_chord_line(line: str) -> bool:
@@ -529,14 +657,58 @@ def merge_repeated_sections(sections: list[Section], canonical_names: set[str]) 
     return True
 
 
-async def build_plan(mgr: BucketManager, *, include_archive: bool = False, bucket_ids: set[str] | None = None) -> list[AnchorMigration]:
+def standardize_section_headings_and_order(sections: list[Section]) -> bool:
+    before = render_sections(sections)
+    for section in sections:
+        if section.canonical == "moment" and section.heading_line != "### moment":
+            section.heading_line = "### moment"
+            section.heading = "moment"
+        elif section.canonical == "reflection" and section.heading_line != "### reflection":
+            section.heading_line = "### reflection"
+            section.heading = "reflection"
+        elif section.canonical == "affect_anchor" and section.heading_line != "### affect_anchor":
+            section.heading_line = "### affect_anchor"
+            section.heading = "affect_anchor"
+
+    leading_body: list[Section] = []
+    rest = list(sections)
+    while rest and not rest[0].heading_line:
+        leading_body.append(rest.pop(0))
+
+    ordered: list[Section] = list(leading_body)
+    used: set[int] = set()
+    standard_order = ("moment", "reflection", "affect_anchor")
+    for canonical in standard_order:
+        for index, section in enumerate(rest):
+            if index in used:
+                continue
+            if section.canonical == canonical:
+                ordered.append(section)
+                used.add(index)
+    for index, section in enumerate(rest):
+        if index not in used:
+            ordered.append(section)
+
+    sections[:] = ordered
+    return normalize_text(render_sections(sections)) != normalize_text(before)
+
+
+async def build_plan(
+    mgr: BucketManager,
+    *,
+    include_archive: bool = False,
+    bucket_ids: set[str] | None = None,
+    scope: str = "ordinary",
+    body_only_moment: str = "skip",
+) -> list[AnchorMigration]:
     if bucket_ids:
         buckets = [bucket for bucket_id in sorted(bucket_ids) if (bucket := await mgr.get(bucket_id))]
     else:
         buckets = await mgr.list_all(include_archive=include_archive)
+        buckets = [bucket for bucket in buckets if bucket_in_scope(bucket, scope)]
     plan = []
     for bucket in buckets:
-        migration = plan_bucket_migration(bucket)
+        migration = plan_bucket_migration(bucket, body_only_moment=body_only_moment)
         if migration:
             plan.append(migration)
     return plan
@@ -574,7 +746,10 @@ def plan_item_from_dict(data: dict[str, Any], *, source: Path) -> AnchorMigratio
         original_affect_anchor=str(data.get("original_affect_anchor") or ""),
         move_to_moment=str_list(data.get("proposed_moment", data.get("move_to_moment"))),
         move_to_assistant_reflection=str_list(
-            data.get("proposed_assistant_reflection", data.get("move_to_assistant_reflection"))
+            data.get(
+                "proposed_reflection",
+                data.get("move_to_reflection", data.get("proposed_assistant_reflection", data.get("move_to_assistant_reflection"))),
+            )
         ),
         deduped_moment=str_list(data.get("deduped_moment")),
         deduped_assistant_reflection=str_list(data.get("deduped_assistant_reflection")),
@@ -690,8 +865,10 @@ def summarize(plan: list[AnchorMigration]) -> dict[str, int]:
         "buckets_to_change": len(plan),
         "moment_paragraphs": sum(len(item.move_to_moment) for item in plan),
         "assistant_reflection_paragraphs": sum(len(item.move_to_assistant_reflection) for item in plan),
+        "reflection_paragraphs": sum(len(item.move_to_assistant_reflection) for item in plan),
         "deduped_moment_paragraphs": sum(len(item.deduped_moment) for item in plan),
         "deduped_assistant_reflection_paragraphs": sum(len(item.deduped_assistant_reflection) for item in plan),
+        "deduped_reflection_paragraphs": sum(len(item.deduped_assistant_reflection) for item in plan),
     }
 
 
@@ -721,11 +898,13 @@ def format_markdown_review(
         "This is a preview only. It does not write buckets, refresh embeddings, or rebuild the moment index.",
         "",
         f"- mode: `{payload.get('mode') or 'dry_run'}`",
+        f"- scope: `{payload.get('scope') or ''}`",
+        f"- body_only_moment: `{payload.get('body_only_moment') or 'skip'}`",
         f"- buckets_dir: `{payload.get('buckets_dir') or ''}`",
         f"- state_dir: `{payload.get('state_dir') or ''}`",
         f"- buckets_to_change: `{summary.get('buckets_to_change', 0)}`",
         f"- moment_paragraphs: `{summary.get('moment_paragraphs', 0)}`",
-        f"- assistant_reflection_paragraphs: `{summary.get('assistant_reflection_paragraphs', 0)}`",
+        f"- reflection_paragraphs: `{summary.get('reflection_paragraphs', 0)}`",
         "",
     ]
     if not plan:
@@ -750,9 +929,9 @@ def format_markdown_review(
                 "",
                 *bullet_lines(data["proposed_moment"]),
                 "",
-                "### 拟迁出的 assistant_reflection",
+                "### 拟迁出的 reflection",
                 "",
-                *bullet_lines(data["proposed_assistant_reflection"]),
+                *bullet_lines(data["proposed_reflection"]),
                 "",
                 "### 拟保留的 affect_anchor",
                 "",
@@ -775,6 +954,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--buckets-dir", default="", help="Override config buckets_dir for this run.")
     parser.add_argument("--state-dir", default="", help="Override config state_dir. With --buckets-dir, defaults to sibling state/.")
     parser.add_argument("--include-archive", action="store_true", help="Also scan archived buckets.")
+    parser.add_argument(
+        "--scope",
+        choices=["ordinary", "core", "feel", "all"],
+        default="ordinary",
+        help=(
+            "Bulk scan scope. ordinary scans dynamic, non-pinned, non-profile buckets; "
+            "core scans permanent/pinned/protected; feel scans feel/daily impressions; all reproduces the broad scan. "
+            "--bucket-id bypasses this filter."
+        ),
+    )
+    parser.add_argument(
+        "--body-only-moment",
+        choices=["skip", "title", "first_sentence"],
+        default="skip",
+        help=(
+            "How to handle buckets with only unheaded body text. "
+            "skip leaves them unchanged; title appends a short moment from the bucket title; "
+            "first_sentence appends a short moment from the first sentence."
+        ),
+    )
     parser.add_argument("--preview-chars", type=int, default=0, help="Truncate each new_structure_preview. 0 = full.")
     parser.add_argument("--output", default="", help="Write the JSON payload to this file.")
     parser.add_argument("--output-md", default="", help="Write a human-readable Markdown review to this file.")
@@ -818,9 +1017,19 @@ async def amain(argv: list[str] | None = None) -> int:
         plan = loaded_plan
     else:
         bucket_ids = {str(item).strip() for item in args.bucket_id if str(item).strip()}
-        plan = await build_plan(mgr, include_archive=bool(args.include_archive), bucket_ids=bucket_ids or None)
+        plan = await build_plan(
+            mgr,
+            include_archive=bool(args.include_archive),
+            bucket_ids=bucket_ids or None,
+            scope=str(args.scope or "ordinary"),
+            body_only_moment=str(args.body_only_moment or "skip"),
+        )
     payload: dict[str, Any] = {
         "mode": "apply" if args.apply else "dry_run",
+        "scope": loaded_plan_payload.get("scope", args.scope) if from_plan else args.scope,
+        "body_only_moment": loaded_plan_payload.get("body_only_moment", args.body_only_moment)
+        if from_plan
+        else args.body_only_moment,
         "buckets_dir": config.get("buckets_dir"),
         "state_dir": config.get("state_dir"),
         "summary": summarize(plan),

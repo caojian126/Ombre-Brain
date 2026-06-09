@@ -6078,7 +6078,7 @@ async def hold(
     arousal: float = -1,
     title: str = "",
 ) -> str:
-    """写一条长期记忆。单个事实/承诺/偏好用 hold；旧记忆的新感受用 comment_bucket；悄悄话用 whisper=True。title 可选，传了就用你给的标题，不传则自动生成。"""
+    """写一条长期记忆。单个事实/承诺/偏好用 hold；旧记忆的新感受用 comment_bucket；悄悄话用 whisper=True。title 可选，传了就用你给的标题，不传则自动生成。content 按需分段：正文 + ### moment + ### original + ### reflection + ### followup + ### affect_anchor（只放和弦温度线），没有的部分不写。"""
     await decay_engine.ensure_started()
 
     # --- Input validation / 输入校验 ---
@@ -6293,7 +6293,7 @@ def _looks_like_operit_auto_grow_content(content: str) -> bool:
 
 @mcp.tool()
 async def grow(content: str, auto: bool = False, source: str = "", title: str = "", context: Context | None = None) -> str:
-    """把筛过的长片段拆成少量长期记忆；单条事实优先 hold，旧记忆补感受优先 comment_bucket。title 可选，短内容时传了就用你给的标题。"""
+    """把筛过的长片段拆成少量长期记忆；单条事实优先 hold，旧记忆补感受优先 comment_bucket。title 可选，短内容时传了就用你给的标题。content 按需分段：正文 + ### moment + ### original + ### reflection + ### followup + ### affect_anchor（只放和弦温度线），没有的部分不写。"""
     await decay_engine.ensure_started()
 
     if not content or not content.strip():

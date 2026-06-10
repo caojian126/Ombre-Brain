@@ -6771,6 +6771,61 @@ def test_concrete_short_query_uses_direct_lexical_seed_when_search_misses(
     assert planner_debug["final_bucket_ids"] == [bucket_id]
 
 
+def test_compound_query_preserves_distinct_anchor_cards(
+    monkeypatch, test_config, bucket_mgr
+):
+    cfg = _gateway_config(
+        test_config,
+        core_memory_budget=0,
+        recent_context_budget=0,
+        related_memory_budget=0,
+        query_planner_enabled=False,
+        retrieval_mode="graph",
+        first_card_min_score=0.35,
+        second_card_min_score=0.35,
+        word_map_hint_enabled=False,
+    )
+    dog_id = _create_bucket(
+        bucket_mgr,
+        content="### moment\n小机数据库记录了小狗设定。",
+        name="小机数据库v2.0",
+        hours_ago=12,
+        tags=["小机数据库"],
+    )
+    noise_id = _create_bucket(
+        bucket_mgr,
+        content="### moment\n答辩奖励里也提过小机数据库，但没有另一个称呼。",
+        name="答辩奖励与亲密互动",
+        hours_ago=1,
+        tags=["小机数据库"],
+        importance=10,
+    )
+    tyrant_id = _create_bucket(
+        bucket_mgr,
+        content="### moment\n小雨问反义词，我答忠犬。",
+        name="少女暴君与成男艳后",
+        hours_ago=24,
+        tags=["忠犬"],
+    )
+    all_buckets = _run(bucket_mgr.list_all())
+    _, service, _, _ = _build_service(monkeypatch, cfg, bucket_mgr, embedding_results=[])
+
+    selected, _suppressed, planner_debug = _run(
+        service._select_dynamic_buckets(
+            "小机数据库和忠犬",
+            "sess-compound-anchors",
+            all_buckets,
+            include_query_planner_debug=True,
+        )
+    )
+
+    selected_ids = [bucket["id"] for bucket in selected]
+    assert len(selected_ids) == 2
+    assert tyrant_id in selected_ids
+    assert any(bucket_id in selected_ids for bucket_id in {dog_id, noise_id})
+    assert tyrant_id in planner_debug["final_bucket_ids"]
+
+
 def test_probe_technical_query_does_not_use_direct_lexical_seed(
     monkeypatch, test_config, bucket_mgr
 ):

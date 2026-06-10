@@ -6278,6 +6278,30 @@ class GatewayService:
             output.append(cleaned)
         return output
 
+    def _query_anchor_terms_for_diversity(self, query: str) -> list[str]:
+        terms = self._planner_lexical_match_terms(self.recall_policy.specific_query_terms(query))
+        output = []
+        seen = set()
+        for term in terms:
+            compact = re.sub(r"[\s，。！？、,.!?:：;；~～♡❤♥（）()\[\]【】「」『』“”\"'`-]+", "", term)
+            if len(compact) < 2 or len(compact) > 24:
+                continue
+            if re.search(r"[.。！？!?,，…]", term):
+                continue
+            key = compact.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            output.append(term)
+        return output[:6]
+
+    def _bucket_matched_query_terms(self, bucket: dict, terms: list[str]) -> list[str]:
+        return [
+            term
+            for term in terms
+            if self._bucket_matches_any_planner_term(bucket, [term])
+        ]
+
     def _merge_dynamic_bucket_items(self, items: list[dict], query: str) -> list[dict]:
         merged: dict[str, dict] = {}
         for item in items:
@@ -6293,6 +6317,7 @@ class GatewayService:
             if existing is None:
                 incoming["planner_queries"] = incoming_queries
                 incoming["planner_match_count"] = len({str(q.get("query") or "") for q in incoming_queries})
+                incoming["matched_query_terms"] = list(dict.fromkeys(incoming.get("matched_query_terms") or []))
                 merged[bucket_id] = incoming
                 continue
 
@@ -6306,9 +6331,16 @@ class GatewayService:
             best = incoming if self._safe_float(incoming.get("score"), 0.0) > self._safe_float(existing.get("score"), 0.0) else existing
             preserved_queries = existing_queries
             preserved_count = len(query_keys)
+            preserved_terms = list(
+                dict.fromkeys(
+                    list(existing.get("matched_query_terms") or [])
+                    + list(incoming.get("matched_query_terms") or [])
+                )
+            )
             merged[bucket_id] = dict(best)
             merged[bucket_id]["planner_queries"] = preserved_queries
             merged[bucket_id]["planner_match_count"] = preserved_count
+            merged[bucket_id]["matched_query_terms"] = preserved_terms
 
         output = []
         for item in merged.values():
@@ -6379,6 +6411,7 @@ class GatewayService:
             for bucket in eligible
             if lexical_terms and bucket.get("id") and self._bucket_matches_any_planner_term(bucket, lexical_terms)
         }
+        diversity_terms = self._query_anchor_terms_for_diversity(candidate_query)
         candidate_ids = set(keyword_scores) | set(semantic_scores) | lexical_ids | set(word_map_scores)
         if not candidate_ids:
             return [], []
@@ -6402,6 +6435,7 @@ class GatewayService:
             relevance_score = relevance_multiplier(query, self._bucket_relevance_node(bucket), self.relevance_options)
             if relevance_score <= 0:
                 continue
+            matched_query_terms = self._bucket_matched_query_terms(bucket, diversity_terms)
             base_score = (
                 semantic_score * self.semantic_weight
                 + keyword_score * self.keyword_weight
@@ -6443,6 +6477,7 @@ class GatewayService:
                     "cooldown_multiplier": cooldown_multiplier,
                     "planner_lexical_match": lexical_match,
                     "planner_queries": [planner_query] if planner_query else [],
+                    "matched_query_terms": matched_query_terms,
                 }
             )
 
@@ -6454,7 +6489,16 @@ class GatewayService:
             )
         )
         scored_candidates = await self._rerank_scored_bucket_candidates(query, scored_candidates)
-        filtered = [item for item in scored_candidates if item["bucket"]["id"] not in recent_ids]
+        filtered = [
+            item
+            for item in scored_candidates
+            if item["bucket"]["id"] not in recent_ids
+            or item.get("planner_lexical_match")
+            or self._is_high_confidence_match(
+                self._safe_float(item.get("semantic_score"), 0.0),
+                self._safe_float(item.get("keyword_score"), 0.0),
+            )
+        ]
         active_pool = filtered or scored_candidates
         admitted_pool = []
         suppressed_candidates = []
@@ -6889,6 +6933,24 @@ class GatewayService:
 
         if self.inject_max_cards < 2 or len(scored_candidates) < 2:
             return chosen
+
+        covered_terms = set(first.get("matched_query_terms") or [])
+        if covered_terms:
+            for candidate in scored_candidates[1:]:
+                candidate_terms = set(candidate.get("matched_query_terms") or [])
+                if not (candidate_terms - covered_terms):
+                    continue
+                candidate_score = self._safe_float(candidate.get("score"), 0.0)
+                if (
+                    candidate_score >= self.second_card_min_score
+                    or candidate.get("planner_lexical_match")
+                    or self._is_high_confidence_match(
+                        self._safe_float(candidate.get("semantic_score"), 0.0),
+                        self._safe_float(candidate.get("keyword_score"), 0.0),
+                    )
+                ):
+                    chosen.append(candidate)
+                    return chosen
 
         second = scored_candidates[1]
         if (

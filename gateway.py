@@ -7602,22 +7602,7 @@ class GatewayService:
         context_mode: str = "",
         date_persona_trace: str = "",
     ) -> tuple[str, str]:
-        stable_sections = []
-        if core_memory.strip() or portrait_memory.strip():
-            stable_sections = [
-                "Use the following private memory only when it fits naturally. "
-                "Keep the reply seamless and do not mention memory lookup, search, or hidden context.",
-            ]
-
-            def add_stable_section(title: str, content: str) -> None:
-                if content.strip():
-                    stable_sections.extend(["", title, content])
-
-            add_stable_section("Core Memory", core_memory)
-            add_stable_section("Portrait Memory", portrait_memory)
-
-        dynamic_sections = []
-        if any(
+        has_dynamic_context = any(
             section.strip()
             for section in [
                 persona_block,
@@ -7634,9 +7619,27 @@ class GatewayService:
                 dream_context,
                 context_mode,
             ]
-        ):
+        )
+        stable_sections = []
+        if core_memory.strip() or portrait_memory.strip():
+            stable_sections = [
+                self._identity_boundary_context(),
+                "Use the following private memory only when it fits naturally. "
+                "Keep the reply seamless and do not mention memory lookup, search, or hidden context.",
+            ]
+
+            def add_stable_section(title: str, content: str) -> None:
+                if content.strip():
+                    stable_sections.extend(["", title, content])
+
+            add_stable_section("Core Memory", core_memory)
+            add_stable_section("Portrait Memory", portrait_memory)
+
+        dynamic_sections = []
+        if has_dynamic_context:
             dynamic_sections = [
                 "Live private context for the current turn. Use it quietly when relevant.",
+                self._identity_boundary_context(),
             ]
 
             def add_section(title: str, content: str) -> None:
@@ -7673,6 +7676,26 @@ class GatewayService:
             return self._trim_text(stable_context, self.inject_total_budget), ""
         remaining = max(0, self.inject_total_budget - stable_tokens)
         return stable_context, self._trim_text(dynamic_context, remaining)
+
+    def _identity_boundary_context(self) -> str:
+        ai_name = str(self.identity.get("ai_name") or "assistant").strip() or "assistant"
+        user_name = str(self.identity.get("user_name") or "").strip()
+        user_display = str(self.identity.get("user_display_name") or user_name or "the user").strip()
+        aliases = [
+            str(alias).strip()
+            for alias in self.identity.get("user_aliases", []) or []
+            if str(alias).strip()
+        ]
+        user_bits = [user_display]
+        if user_name and user_name != user_display:
+            user_bits.append(user_name)
+        user_bits.extend(alias for alias in aliases[:4] if alias not in user_bits)
+        user_label = " / ".join(user_bits)
+        return (
+            f"Identity boundary: you are {ai_name}. The current user is {user_label}. "
+            f"Do not address the user as {ai_name}; names inside private memory refer to participants, "
+            "not necessarily the addressee."
+        )
 
     def _bucket_runtime_gate_payload(
         self,

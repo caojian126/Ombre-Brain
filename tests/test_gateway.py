@@ -305,6 +305,35 @@ def _joined_message_content(messages: list[dict]) -> str:
     )
 
 
+def test_gateway_private_context_adds_identity_boundary(monkeypatch, test_config, bucket_mgr):
+    cfg = _gateway_config(test_config)
+    cfg["identity"] = {
+        "ai_name": "Haven",
+        "user_name": "Rain",
+        "user_display_name": "小雨",
+        "user_aliases": ["宝宝", "老婆"],
+    }
+    _, service, _, _ = _build_service(monkeypatch, cfg, bucket_mgr)
+
+    stable, dynamic = service._build_injected_context_messages(
+        persona_block="",
+        core_memory="",
+        portrait_memory="",
+        just_now_context="",
+        recent_context="",
+        recalled_memory="Haven 在记忆里说小机数据库。",
+        relationship_weather="",
+        favorite_memory="",
+        related_memory="",
+    )
+
+    assert stable == ""
+    assert "Identity boundary: you are Haven" in dynamic
+    assert "The current user is 小雨 / Rain / 宝宝 / 老婆" in dynamic
+    assert "Do not address the user as Haven" in dynamic
+    assert "Recalled Memory" in dynamic
+
+
 def _create_moment_diffusion_pair(
     bucket_mgr,
     config: dict,

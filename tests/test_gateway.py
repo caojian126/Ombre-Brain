@@ -7920,6 +7920,136 @@ def test_gateway_dual_query_view_skips_lexical_routes_when_normalized_empty(
     assert planner_debug["normalized_query"] == ""
 
 
+def test_exact_anchor_phrase_candidate_when_keyword_and_embedding_miss(
+    monkeypatch, test_config, bucket_mgr
+):
+    cfg = _gateway_config(
+        test_config,
+        core_memory_budget=0,
+        recent_context_budget=0,
+        related_memory_budget=0,
+        query_planner_enabled=False,
+        retrieval_mode="bucket",
+        word_map_hint_enabled=False,
+    )
+    target_id = _create_bucket(
+        bucket_mgr,
+        content="### moment\n小雨说今天是雨天，这是只按原话记住的暗号。",
+        name="雨天暗号",
+        hours_ago=12,
+        tags=["暗号"],
+    )
+    _create_bucket(
+        bucket_mgr,
+        content="### moment\n今天普通下雨，天气预报说会转晴。",
+        name="普通天气",
+        hours_ago=1,
+        importance=10,
+    )
+    _, service, _, _ = _build_service(monkeypatch, cfg, bucket_mgr, embedding_results=[])
+    monkeypatch.setattr(service, "_get_keyword_candidates", lambda query_text, eligible: {})
+
+    all_buckets = _run(bucket_mgr.list_all())
+    selected, _suppressed, planner_debug = _run(
+        service._select_dynamic_buckets(
+            "今天是雨天",
+            "sess-exact-anchor-phrase",
+            all_buckets,
+            include_query_planner_debug=True,
+        )
+    )
+
+    assert [bucket["id"] for bucket in selected] == [target_id]
+    assert planner_debug["exact_anchor_hints"]["bucket_ids"] == [target_id]
+    assert planner_debug["exact_anchor_hints"]["terms"] == ["今天是雨天"]
+
+
+def test_exact_anchor_short_code_candidate_without_keyword_or_embedding(
+    monkeypatch, test_config, bucket_mgr
+):
+    cfg = _gateway_config(
+        test_config,
+        core_memory_budget=0,
+        recent_context_budget=0,
+        related_memory_budget=0,
+        query_planner_enabled=False,
+        retrieval_mode="bucket",
+        word_map_hint_enabled=False,
+    )
+    target_id = _create_bucket(
+        bucket_mgr,
+        content="### moment\n暗号 030 对应那次只适合原话命中的小记录。",
+        name="030 暗号",
+        hours_ago=12,
+        tags=["暗号"],
+    )
+    _create_bucket(
+        bucket_mgr,
+        content="### moment\n这里没有那个编号，只是普通记录。",
+        name="普通编号记录",
+        hours_ago=1,
+        importance=10,
+    )
+    _, service, _, _ = _build_service(monkeypatch, cfg, bucket_mgr, embedding_results=[])
+    monkeypatch.setattr(service, "_get_keyword_candidates", lambda query_text, eligible: {})
+
+    all_buckets = _run(bucket_mgr.list_all())
+    selected, _suppressed, planner_debug = _run(
+        service._select_dynamic_buckets(
+            "030",
+            "sess-exact-anchor-code",
+            all_buckets,
+            include_query_planner_debug=True,
+        )
+    )
+
+    assert [bucket["id"] for bucket in selected] == [target_id]
+    assert planner_debug["exact_anchor_hints"]["bucket_ids"] == [target_id]
+    assert planner_debug["exact_anchor_hints"]["terms"] == ["030"]
+
+
+def test_exact_anchor_ignores_configured_identity_name_alone(
+    monkeypatch, test_config, bucket_mgr
+):
+    cfg = _gateway_config(
+        test_config,
+        core_memory_budget=0,
+        recent_context_budget=0,
+        related_memory_budget=0,
+        query_planner_enabled=False,
+        retrieval_mode="bucket",
+        word_map_hint_enabled=False,
+    )
+    cfg["identity"] = {
+        "ai_name": "Haven",
+        "user_name": "Xiaoyu",
+        "user_display_name": "小雨",
+    }
+    _create_bucket(
+        bucket_mgr,
+        content="### moment\nHaven 这个名字出现在很多记忆里，不能单独当硬锚点。",
+        name="Haven 名字出现",
+        hours_ago=12,
+        tags=["身份"],
+    )
+    _, service, _, _ = _build_service(monkeypatch, cfg, bucket_mgr, embedding_results=[])
+    monkeypatch.setattr(service, "_get_keyword_candidates", lambda query_text, eligible: {})
+
+    all_buckets = _run(bucket_mgr.list_all())
+    selected, _suppressed, planner_debug = _run(
+        service._select_dynamic_buckets(
+            "Haven",
+            "sess-exact-anchor-identity",
+            all_buckets,
+            include_query_planner_debug=True,
+        )
+    )
+
+    assert selected == []
+    assert planner_debug["exact_anchor_hints"]["bucket_ids"] == []
+    assert planner_debug["exact_anchor_hints"]["terms"] == []
+
+
 def test_concrete_short_query_uses_direct_lexical_seed_when_search_misses(
     monkeypatch, test_config, bucket_mgr
 ):

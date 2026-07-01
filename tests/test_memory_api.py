@@ -2804,6 +2804,52 @@ async def test_todo_api_marks_done_without_bucket_edit_and_writeback_skips_embed
 
 
 @pytest.mark.asyncio
+async def test_todo_writeback_uses_updated_at_for_legacy_done_without_resolved_at(
+    monkeypatch,
+    bucket_mgr,
+    decay_eng,
+    tmp_path,
+):
+    import server
+    from todo_store import TodoStore
+
+    bucket_id = await bucket_mgr.create(
+        content="正文保持不变。\n\n### followup\n补旧待办完成日期。",
+        name="旧待办",
+        domain=["项目"],
+    )
+
+    monkeypatch.setattr(server, "bucket_mgr", bucket_mgr)
+    monkeypatch.setattr(server, "decay_engine", decay_eng)
+    monkeypatch.setattr(server, "_require_dashboard_auth", lambda request: None)
+    store = TodoStore({"state_dir": str(tmp_path / "state"), "buckets_dir": str(tmp_path / "buckets")})
+    monkeypatch.setattr(server, "todo_store", store)
+    monkeypatch.setattr(server, "embedding_engine", CapturingEmbeddingEngine())
+
+    listed = await server.api_todos(DummyRequest(query_params={"status": "open"}))
+    todo = json.loads(listed.body)["todos"][0]
+    store.set_status(todo["id"], "done", resolved_at="2026-06-26T09:30:00+08:00")
+    conn = store._connect()
+    try:
+        with conn:
+            conn.execute(
+                "UPDATE todos SET resolved_at = NULL, updated_at = ? WHERE id = ?",
+                ("2026-06-26T09:30:00+08:00", todo["id"]),
+            )
+    finally:
+        conn.close()
+
+    writeback = await server.api_todo_writeback(
+        DummyRequest({}, path_params={"todo_id": todo["id"]})
+    )
+    after_writeback = await bucket_mgr.get(bucket_id)
+
+    assert writeback.status_code == 200
+    assert "[done 2026-06-26]" in after_writeback["content"]
+    assert "[done date_unknown]" not in after_writeback["content"]
+
+
+@pytest.mark.asyncio
 async def test_dashboard_comment_delete_only_allows_rain_dashboard_comments(monkeypatch, bucket_mgr, decay_eng):
     import server
 

@@ -1981,7 +1981,7 @@ async def _writeback_completed_todo(todo_id: str) -> dict:
     new_content, changed = _writeback_completed_followup_content(
         bucket.get("content", ""),
         todo.get("text", ""),
-        todo.get("resolved_at"),
+        todo.get("resolved_at") or todo.get("updated_at") or now_iso(),
     )
     embedding_queued = False
     if changed:

@@ -669,3 +669,13 @@ def test_dashboard_import_file_input_resets_after_selection():
     assert "const selectedFile = fileInput.files[0];" in import_block
     assert "fileInput.value = '';" in import_block
     assert "startImport(selectedFile);" in import_block
+
+
+def test_dashboard_import_upload_requests_resume():
+    html = Path("dashboard.html").read_text(encoding="utf-8")
+    import_block = html.split("async function startImport", 1)[1].split("let importPollTimer", 1)[0]
+
+    assert "new URLSearchParams" in import_block
+    assert "preserve_raw: preserveRaw ? '1' : '0'," in import_block
+    assert "resume: '1'," in import_block
+    assert "'/api/import/upload?' + params.toString()" in import_block

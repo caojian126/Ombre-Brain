@@ -7555,8 +7555,12 @@ async function startImport(file) {
   const preserveRaw = document.getElementById('import-preserve-raw').checked;
   const fd = new FormData();
   fd.append('file', file);
+  const params = new URLSearchParams({
+    preserve_raw: preserveRaw ? '1' : '0',
+    resume: '1',
+  });
   try {
-    const res = await authFetch(BASE + '/api/import/upload?preserve_raw=' + (preserveRaw ? '1' : '0'), { method: 'POST', body: fd });
+    const res = await authFetch(BASE + '/api/import/upload?' + params.toString(), { method: 'POST', body: fd });
     if (!res) return;
     const data = await res.json();
     if (data.error) { alert('导入失败: ' + data.error); return; }

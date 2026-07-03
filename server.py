@@ -1376,6 +1376,33 @@ def _select_self_anchor_entry_bucket(all_buckets: list[dict]) -> dict | None:
     return selected[0] if selected else None
 
 
+def _is_self_anchor_recall_excluded_bucket(bucket: dict | None) -> bool:
+    if not isinstance(bucket, dict):
+        return False
+    if is_self_anchor_bucket(bucket):
+        return True
+    entry_id = _self_anchor_entry_bucket_id()
+    return bool(entry_id and str(bucket.get("id") or "") == entry_id)
+
+
+def _is_self_anchor_recall_excluded_moment(moment: dict | None) -> bool:
+    if not isinstance(moment, dict):
+        return False
+    if is_self_anchor_metadata(moment.get("metadata", {})):
+        return True
+    entry_id = _self_anchor_entry_bucket_id()
+    return bool(entry_id and str(moment.get("bucket_id") or "") == entry_id)
+
+
+def _prune_self_anchor_moment_index(all_buckets: list[dict]) -> None:
+    for bucket in all_buckets or []:
+        if not _is_self_anchor_recall_excluded_bucket(bucket):
+            continue
+        bucket_id = str(bucket.get("id") or "").strip()
+        if bucket_id:
+            memory_moment_store.delete_bucket(bucket_id)
+
+
 def _self_anchor_body_text(bucket: dict, *, include_reflection: bool = False, max_chars: int = 260) -> str:
     sections = _profile_fact_sections(bucket.get("content", ""))
     body_text = _leading_body_text(bucket.get("content", ""))
@@ -1420,8 +1447,6 @@ def _is_self_anchor_tag_read_request(query: str) -> bool:
     aliases = {
         SELF_ANCHOR_TAG,
         "self_anchor",
-        "self_identity",
-        "self-identity",
         "first_person_anchor",
         "first-person-anchor",
     }
@@ -4233,7 +4258,7 @@ def _recallable_moments(moments: list[dict]) -> list[dict]:
     return [
         moment for moment in moments
         if can_moment_be_recall_context(moment)
-        and not is_self_anchor_metadata(moment.get("metadata", {}))
+        and not _is_self_anchor_recall_excluded_moment(moment)
         and not _moment_from_feel_bucket(moment)
     ]
 
@@ -6288,7 +6313,8 @@ def _representative_moments_by_bucket(
 async def _refresh_moment_graph(all_buckets: list[dict] | None = None) -> tuple[list[dict], dict[str, list[dict]], list[dict]]:
     if all_buckets is None:
         all_buckets = await bucket_mgr.list_all(include_archive=False)
-    recallable_buckets = [bucket for bucket in all_buckets if not is_self_anchor_bucket(bucket)]
+    _prune_self_anchor_moment_index(all_buckets)
+    recallable_buckets = [bucket for bucket in all_buckets if not _is_self_anchor_recall_excluded_bucket(bucket)]
     memory_moment_store.bulk_upsert(recallable_buckets)
     moments = _recallable_moments(memory_moment_store.list_all())
     grouped = _moments_by_bucket(moments)

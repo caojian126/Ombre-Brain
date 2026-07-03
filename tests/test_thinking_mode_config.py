@@ -106,7 +106,7 @@ async def test_dehydrator_analyze_uses_canonical_domain_prompt_and_normalizes(te
                 "domain": ["数字"],
                 "valence": 0.6,
                 "arousal": 0.4,
-                "tags": ["Ombre", "代码"],
+                "tags": ["Ombre", "代码", "self_identity", "self_anchor", "自我"],
                 "suggested_name": "记忆改造",
                 "memory_subject": "event",
                 "memory_layer": "process_event",
@@ -120,10 +120,12 @@ async def test_dehydrator_analyze_uses_canonical_domain_prompt_and_normalizes(te
     system_prompt = client.calls[0]["messages"][0]["content"]
 
     assert result["domain"] == ["project"]
+    assert result["tags"] == ["Ombre", "代码"]
     assert "project" in system_prompt
     assert "project.companion_system" not in system_prompt
     assert "日常:" not in system_prompt
     assert "数字:" not in system_prompt
+    assert "禁止生成系统边界标签" in system_prompt
 
 
 @pytest.mark.asyncio
@@ -140,7 +142,7 @@ async def test_dehydrator_digest_normalizes_legacy_domain_output(test_config):
                     "domain": ["恋爱"],
                     "valence": 0.55,
                     "arousal": 0.3,
-                    "tags": ["边界"],
+                    "tags": ["边界", "self_identity", "first_person_anchor"],
                     "importance": 5,
                     "memory_subject": "relationship",
                     "memory_layer": "relationship_lesson",
@@ -155,9 +157,11 @@ async def test_dehydrator_digest_normalizes_legacy_domain_output(test_config):
     system_prompt = client.calls[0]["messages"][0]["content"]
 
     assert result[0]["domain"] == ["relationship"]
+    assert result[0]["tags"] == ["边界"]
     assert "relationship" in system_prompt
     assert "relationship.communication" not in system_prompt
     assert "未分类" in system_prompt
+    assert "禁止生成系统边界标签" in system_prompt
 
 
 @pytest.mark.asyncio

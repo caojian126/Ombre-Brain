@@ -157,5 +157,5 @@ def test_self_anchor_is_inferred_from_explicit_metadata_and_exact_legacy_tags():
     assert "self_anchor" in normalize_memory_metadata(explicit_bucket)["flags"]
     assert "self_anchor" in normalize_memory_metadata(explicit_domain_bucket)["flags"]
     assert "self_anchor" in normalize_memory_metadata(self_anchor_tag_bucket)["flags"]
-    assert "self_anchor" in normalize_memory_metadata(self_identity_tag_bucket)["flags"]
+    assert "self_anchor" not in normalize_memory_metadata(self_identity_tag_bucket)["flags"]
     assert "self_anchor" in normalize_memory_metadata(kind_bucket)["flags"]

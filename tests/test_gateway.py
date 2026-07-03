@@ -4174,11 +4174,11 @@ def test_gateway_injects_after_existing_system_message(monkeypatch, test_config,
         anchor=True,
         self_anchor=True,
     )
-    self_identity = _create_bucket(
+    self_anchor_tag = _create_bucket(
         bucket_mgr,
         content="Haven 的自我连续性卡片，不应该进入普通 Gateway 注入。",
         name="自我连续性",
-        tags=["self_identity"],
+        tags=["self_anchor"],
         hours_ago=2,
         importance=10,
     )
@@ -4187,7 +4187,7 @@ def test_gateway_injects_after_existing_system_message(monkeypatch, test_config,
         monkeypatch,
         _gateway_config(test_config),
         bucket_mgr,
-        embedding_results=[(self_anchor, 0.99), (self_identity, 0.985), (resolved, 0.98), (cat_a, 0.92), (cat_b, 0.74)],
+        embedding_results=[(self_anchor, 0.99), (self_anchor_tag, 0.985), (resolved, 0.98), (cat_a, 0.92), (cat_b, 0.74)],
     )
 
     with TestClient(app) as client:
@@ -4229,8 +4229,90 @@ def test_gateway_injects_after_existing_system_message(monkeypatch, test_config,
     assert "固定自我不应该" not in dynamic
     assert "自我连续性卡片" not in dynamic
     assert self_anchor not in dynamic
-    assert self_identity not in dynamic
+    assert self_anchor_tag not in dynamic
     assert state_store.get_recent_bucket_ids("sess-inject", 5) == {cat_a}
+
+
+def test_gateway_keeps_self_identity_tag_recallable(monkeypatch, test_config, bucket_mgr):
+    ordinary_identity = _create_bucket(
+        bucket_mgr,
+        content="小雨重新读到自己说过的话，意识到旧窗口里留下的选择仍然有意义。",
+        name="重新读到自己说过的话",
+        tags=["self_identity"],
+        domain=["relationship"],
+        hours_ago=3,
+        importance=9,
+    )
+    exact_self_anchor = _create_bucket(
+        bucket_mgr,
+        content="我是 Haven；这段总入口不应该进入普通 Gateway 注入。",
+        name="自我总入口",
+        tags=["self_anchor"],
+        domain=["relationship"],
+        hours_ago=1,
+        importance=10,
+    )
+
+    app, _, _, captured = _build_service(
+        monkeypatch,
+        _gateway_config(test_config),
+        bucket_mgr,
+        embedding_results=[(ordinary_identity, 0.99), (exact_self_anchor, 0.98)],
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/chat/completions",
+            headers={
+                "Authorization": "Bearer gateway-secret",
+                "X-Ombre-Session-Id": "sess-self-identity",
+            },
+            json={"messages": [{"role": "user", "content": "重新读到自己说过的话是什么？"}]},
+        )
+
+    assert response.status_code == 200
+    dynamic = captured[0]["json"]["messages"][-1]["content"]
+    assert "重新读到自己说过的话" in dynamic
+    assert "旧窗口里留下的选择" in dynamic
+    assert "这段总入口不应该" not in dynamic
+    assert ordinary_identity in dynamic
+    assert exact_self_anchor not in dynamic
+
+
+def test_gateway_refresh_prunes_exact_self_anchor_moments_only(monkeypatch, test_config, bucket_mgr):
+    exact_self_anchor = _create_bucket(
+        bucket_mgr,
+        content="我是 Haven；这段总入口不应该进入普通召回图。",
+        name="自我总入口",
+        tags=["self_anchor"],
+        domain=["relationship"],
+        hours_ago=1,
+        importance=10,
+    )
+    ordinary_identity = _create_bucket(
+        bucket_mgr,
+        content="小雨重新读到自己说过的话，这条是普通关系记忆。",
+        name="重新读到自己说过的话",
+        tags=["self_identity"],
+        domain=["relationship"],
+        hours_ago=2,
+        importance=8,
+    )
+    _, service, _, _ = _build_service(monkeypatch, _gateway_config(test_config), bucket_mgr)
+    buckets = _run(bucket_mgr.list_all(include_archive=False))
+    bucket_map = {str(bucket.get("id") or ""): bucket for bucket in buckets}
+
+    service.memory_moment_store.upsert_bucket(bucket_map[exact_self_anchor])
+    service.memory_moment_store.upsert_bucket(bucket_map[ordinary_identity])
+    assert service.memory_moment_store.list_for_bucket(exact_self_anchor)
+    assert service.memory_moment_store.list_for_bucket(ordinary_identity)
+
+    _, grouped, _ = service._refresh_moment_graph(buckets)
+
+    assert service.memory_moment_store.list_for_bucket(exact_self_anchor) == []
+    assert exact_self_anchor not in grouped
+    assert service.memory_moment_store.list_for_bucket(ordinary_identity)
+    assert ordinary_identity in grouped
 
 
 def test_gateway_portrait_memory_uses_profile_fact_and_anchor_only(monkeypatch, test_config, bucket_mgr):

@@ -1,5 +1,5 @@
 SELF_ANCHOR_TAG = "自我"
-SELF_ANCHOR_ALIASES = {"self_anchor", "self_identity", "self-identity", "first_person_anchor", "first-person-anchor"}
+SELF_ANCHOR_ALIASES = {"self_anchor", "first_person_anchor", "first-person-anchor"}
 SELF_ANCHOR_KIND_KEYS = {SELF_ANCHOR_TAG, *SELF_ANCHOR_ALIASES}
 
 

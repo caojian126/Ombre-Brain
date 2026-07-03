@@ -537,7 +537,7 @@ def _flags(
         or _has_exact_marker(
             legacy_domain,
             tags,
-            {"self_anchor", "selfidentity", "self_identity", "self-identity", "first_person_anchor", "自我"},
+            {"self_anchor", "first_person_anchor", "firstpersonanchor", "自我"},
         )
         or _has_exact_marker(
             [],
@@ -548,7 +548,7 @@ def _flags(
                 _clean(meta.get("kind")),
                 _clean(meta.get("source")),
             ],
-            {"self_anchor", "selfidentity", "self_identity", "self-identity", "first_person_anchor", "自我"},
+            {"self_anchor", "first_person_anchor", "firstpersonanchor", "自我"},
         ),
     )
     add("favorite", "favorite" in compact or "最爱" in blob)

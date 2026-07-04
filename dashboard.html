@@ -3417,7 +3417,7 @@
         <label>读取对话轮次</label>
         <input type="number" id="cfg-reflection-daily-turns" min="0" max="80" />
       </div>
-      <div style="margin-top:-4px;margin-bottom:12px;padding-left:122px;font-size:11px;color:var(--text-light);">默认 0；大于 0 时读取当天短期对话原文作为日印象材料</div>
+      <div style="margin-top:-4px;margin-bottom:12px;padding-left:122px;font-size:11px;color:var(--text-light);">默认 12；读取少量当天短期对话原文作为日印象材料</div>
       <div class="config-row">
         <label>自动记忆</label>
         <select id="cfg-reflection-chat-memory-mode">
@@ -7599,7 +7599,7 @@ async function loadConfig() {
     document.getElementById('cfg-reflection-daily-min-memory').value =
       (cfg.reflection && cfg.reflection.daily_min_memory_items) ?? 5;
     document.getElementById('cfg-reflection-daily-turns').value =
-      (cfg.reflection && cfg.reflection.daily_conversation_turn_limit) ?? 0;
+      (cfg.reflection && cfg.reflection.daily_conversation_turn_limit) ?? 12;
     document.getElementById('cfg-reflection-chat-memory-mode').value =
       (cfg.reflection && cfg.reflection.daily_chat_memory_mode) || 'auto';
     document.getElementById('cfg-reflection-chat-memory-turns').value =
@@ -7745,7 +7745,7 @@ async function saveConfig(persist, persistEnv) {
       auto_enabled: document.getElementById('cfg-reflection-auto').value === 'true',
       daily_enabled: document.getElementById('cfg-reflection-daily').value === 'true',
       daily_min_memory_items: numberValue('cfg-reflection-daily-min-memory', 5),
-      daily_conversation_turn_limit: numberValue('cfg-reflection-daily-turns', 0),
+      daily_conversation_turn_limit: numberValue('cfg-reflection-daily-turns', 12),
       daily_chat_memory_mode: document.getElementById('cfg-reflection-chat-memory-mode').value || 'auto',
       daily_chat_memory_turn_limit: numberValue('cfg-reflection-chat-memory-turns', 0),
       memory_affect_anchor_enabled: document.getElementById('cfg-reflection-memory-anchor').value === 'true',

@@ -350,6 +350,55 @@ class DailyPortraitMaintainer:
             "initial": True,
         }
 
+    def has_recent_timeline_item(
+        self,
+        *,
+        date_key: str = "",
+        source: str = "",
+        timeline_id: str = "",
+    ) -> bool:
+        state = self.load_state()
+        rows = state.get("recent_timeline", []) if isinstance(state.get("recent_timeline"), list) else []
+        safe_date = str(date_key or "").strip()
+        safe_source = str(source or "").strip()
+        safe_timeline_id = str(timeline_id or "").strip()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            if safe_timeline_id and str(row.get("timeline_id") or "").strip() == safe_timeline_id:
+                return True
+            if safe_source and str(row.get("source") or "").strip() != safe_source:
+                continue
+            if safe_date:
+                row_dates = set(self._merge_source_dates(row.get("source_dates", []), row.get("source_date", "")))
+                row_dates.add(self._timeline_date_key(row))
+                if safe_date not in row_dates:
+                    continue
+            if safe_source or safe_date:
+                return True
+        return False
+
+    def upsert_recent_timeline_item(self, item: dict, date_key: str) -> dict:
+        if not isinstance(item, dict):
+            return {"status": "invalid", "reason": "item_not_object"}
+        if not str(item.get("text") or "").strip():
+            return {"status": "skipped", "reason": "empty_text"}
+        state = self.load_state()
+        rows = state.setdefault("recent_timeline", [])
+        if not isinstance(rows, list):
+            rows = []
+            state["recent_timeline"] = rows
+        self._upsert_recent_timeline_item(rows, item, str(date_key or "").strip())
+        self._normalize_recent_timeline_state(state)
+        state["updated_at"] = self._now_utc()
+        self.save_state(state)
+        return {
+            "status": "updated",
+            "date": str(date_key or "").strip(),
+            "state_path": self.state_path,
+            "recent_timeline": len(state.get("recent_timeline", [])),
+        }
+
     def delete_state_item(
         self,
         *,
@@ -1289,18 +1338,53 @@ class DailyPortraitMaintainer:
         del rows[max_items:]
 
     def _upsert_recent_timeline_item(self, rows: list[dict], item: dict, date_key: str) -> None:
+        timeline_id = str(item.get("timeline_id") or "").strip()
+        source = str(item.get("source") or "").strip()
         key = (self._norm(item.get("text", "")), str(item.get("scope") or ""))
         if not key[0]:
             return
         now = self._now_utc()
         for row in rows:
-            row_key = (self._norm(row.get("text", "")), str(row.get("scope") or ""))
-            if row_key != key:
-                continue
+            row_timeline_id = str(row.get("timeline_id") or "").strip()
+            if timeline_id:
+                if row_timeline_id != timeline_id:
+                    continue
+            else:
+                row_key = (self._norm(row.get("text", "")), str(row.get("scope") or ""))
+                if row_key != key:
+                    continue
+            row["scope"] = str(item.get("scope") or row.get("scope") or "recent")
+            if timeline_id:
+                row["timeline_id"] = timeline_id
+            if source:
+                row["source"] = source
+            if item.get("source_turn_ids") is not None:
+                row["source_turn_ids"] = self._merge_source_ids(
+                    row.get("source_turn_ids", []),
+                    item.get("source_turn_ids", []),
+                    limit=80,
+                )
+            if item.get("source_event_ids") is not None:
+                row["source_event_ids"] = self._merge_source_ids(
+                    row.get("source_event_ids", []),
+                    item.get("source_event_ids", []),
+                    limit=160,
+                )
+            if item.get("source_date"):
+                row["source_dates"] = self._merge_source_dates(
+                    row.get("source_dates", []),
+                    item.get("source_date", ""),
+                )
+            if item.get("source_dates"):
+                row["source_dates"] = self._merge_source_dates(
+                    row.get("source_dates", []),
+                    item.get("source_dates", []),
+                )
+            if not row.get("source_dates"):
+                row["source_dates"] = self._merge_source_dates([], item.get("source_date", ""))
+            row["source_date"] = item.get("source_date") or row.get("source_date", "")
             row["text"] = item["text"]
             row["evidence"] = self._dedupe_evidence(row.get("evidence", []) + item.get("evidence", []))
-            row["source_dates"] = self._merge_source_dates(row.get("source_dates", []), item.get("source_dates", []))
-            row["source_date"] = item.get("source_date") or row.get("source_date", "")
             row["confidence"] = max(float(row.get("confidence") or 0.0), float(item.get("confidence") or 0.0))
             incoming_time = self._parse_iso(item.get("timestamp"))
             current_time = self._parse_iso(row.get("timestamp"))
@@ -1311,7 +1395,10 @@ class DailyPortraitMaintainer:
                 row["time_label"] = current_time.strftime("%Y-%m-%d %H:%M")
             row["last_seen_date"] = date_key
             row["updated_at"] = now
-            row["count"] = int(row.get("count") or 1) + 1
+            if timeline_id:
+                row["count"] = max(1, int(row.get("count") or 1))
+            else:
+                row["count"] = int(row.get("count") or 1) + 1
             break
         else:
             timestamp = self._parse_iso(item.get("timestamp"))
@@ -1328,6 +1415,16 @@ class DailyPortraitMaintainer:
                 "updated_at": now,
                 "count": 1,
             }
+            if timeline_id:
+                row["timeline_id"] = timeline_id
+            if source:
+                row["source"] = source
+            source_turn_ids = self._merge_source_ids([], item.get("source_turn_ids", []), limit=80)
+            source_event_ids = self._merge_source_ids([], item.get("source_event_ids", []), limit=160)
+            if source_turn_ids:
+                row["source_turn_ids"] = source_turn_ids
+            if source_event_ids:
+                row["source_event_ids"] = source_event_ids
             if timestamp:
                 row["timestamp"] = timestamp.isoformat(timespec="minutes")
                 row["time_label"] = timestamp.strftime("%Y-%m-%d %H:%M")
@@ -1338,6 +1435,25 @@ class DailyPortraitMaintainer:
         )
         rows[:] = self._dedupe_recent_timeline_rows(rows)
         del rows[self.recent_timeline_max:]
+
+    @staticmethod
+    def _merge_source_ids(existing: Any, incoming: Any, *, limit: int) -> list[int]:
+        result = []
+        seen = set()
+        for values in (existing, incoming):
+            source = values if isinstance(values, list) else [values]
+            for value in source:
+                try:
+                    number = int(value)
+                except (TypeError, ValueError):
+                    continue
+                if number <= 0 or number in seen:
+                    continue
+                seen.add(number)
+                result.append(number)
+                if len(result) >= limit:
+                    return result
+        return result
 
     def _merge_source_dates(self, existing: Any, incoming: Any) -> list[str]:
         dates = {
@@ -1508,6 +1624,7 @@ class DailyPortraitMaintainer:
 
     def _dedupe_recent_timeline_rows(self, rows: list[dict]) -> list[dict]:
         deduped = []
+        seen_ids = set()
         seen_text = set()
         seen_events = set()
         sorted_rows = sorted(
@@ -1516,6 +1633,11 @@ class DailyPortraitMaintainer:
             reverse=True,
         )
         for row in sorted_rows:
+            timeline_id = str(row.get("timeline_id") or "").strip()
+            if timeline_id:
+                if timeline_id in seen_ids:
+                    continue
+                seen_ids.add(timeline_id)
             text_key = (self._norm(row.get("text", "")), str(row.get("scope") or ""))
             if text_key[0] and text_key in seen_text:
                 continue

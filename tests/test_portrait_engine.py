@@ -29,6 +29,58 @@ def test_portrait_prompt_uses_neutral_evidence_state_maintainer(tmp_path, test_c
     assert not prompt.startswith("你是 Haven")
 
 
+def test_upsert_recent_timeline_item_updates_stable_daily_activity(tmp_path, test_config):
+    engine = DailyPortraitMaintainer(
+        {
+            **test_config,
+            "portrait": {
+                "enabled": True,
+                "state_path": str(tmp_path / "state" / "portrait_state.json"),
+            },
+        }
+    )
+    first = {
+        "timeline_id": "daily_activity_summary:2026-07-04",
+        "source": "daily_activity_summary",
+        "scope": "doing",
+        "text": "围绕 handoff 的 Recent Timeline 继续推进。",
+        "source_date": "2026-07-04",
+        "source_dates": ["2026-07-04"],
+        "timestamp": "2026-07-04T20:00:00+08:00",
+        "confidence": 0.6,
+        "source_turn_ids": [7],
+        "source_event_ids": [101],
+        "evidence": [{"session_id": "daily-chat"}],
+    }
+    second = {
+        **first,
+        "text": "完成 handoff Recent Timeline 的当天事项摘要接线。",
+        "timestamp": "2026-07-04T21:00:00+08:00",
+        "source_turn_ids": [8],
+        "source_event_ids": [102, 103],
+    }
+
+    engine.upsert_recent_timeline_item(first, "2026-07-04")
+    engine.upsert_recent_timeline_item(second, "2026-07-04")
+
+    state = engine.load_state()
+    rows = state["recent_timeline"]
+    assert len(rows) == 1
+    assert rows[0]["text"] == "完成 handoff Recent Timeline 的当天事项摘要接线。"
+    assert rows[0]["timeline_id"] == "daily_activity_summary:2026-07-04"
+    assert rows[0]["source"] == "daily_activity_summary"
+    assert rows[0]["source_turn_ids"] == [7, 8]
+    assert rows[0]["source_event_ids"] == [101, 102, 103]
+    assert rows[0]["count"] == 1
+    assert engine.has_recent_timeline_item(
+        date_key="2026-07-04",
+        source="daily_activity_summary",
+        timeline_id="daily_activity_summary:2026-07-04",
+    )
+    continuity = engine.build_handoff_sections(max_recent_items=3)["recent_continuity"]
+    assert "doing: 完成 handoff Recent Timeline 的当天事项摘要接线" in continuity
+
+
 def test_portrait_json_parser_accepts_fenced_object_with_tail(tmp_path, test_config):
     engine = DailyPortraitMaintainer(
         {

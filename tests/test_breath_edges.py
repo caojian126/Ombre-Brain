@@ -2421,6 +2421,7 @@ async def test_handoff_breath_returns_compact_portrait_without_dynamic_recall(pa
     self_anchor["metadata"]["domain"] = ["self_anchor"]
     dynamic = _bucket("dynamic_a", "这条高权重动态记忆不应该在 handoff 模式里浮现。", score=999)
     bucket_mgr = patch_breath([profile, anchor, self_anchor, dynamic], search_ids=["dynamic_a"])
+    seen = {}
 
     class FakePortrait:
         enabled = True
@@ -2430,6 +2431,7 @@ async def test_handoff_breath_returns_compact_portrait_without_dynamic_recall(pa
         state_path = "state/portrait_state.json"
 
         def build_handoff_sections(self, *, max_recent_items=4):
+            seen["max_recent_items"] = max_recent_items
             return {
                 "user": "Mid-term: 小雨正在把换窗上下文改成画像优先。",
                 "persona": "Mid-term: Haven 回复时要短、直白、带一点恋人口吻。",
@@ -2475,6 +2477,7 @@ async def test_handoff_breath_returns_compact_portrait_without_dynamic_recall(pa
     assert "=== 联想浮现 ===" not in result
     assert "===== 梦境 =====" not in result
     assert "这条高权重动态记忆不应该" not in result
+    assert seen["max_recent_items"] == 3
     assert bucket_mgr.touched == []
 
 

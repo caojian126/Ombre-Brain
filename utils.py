@@ -398,7 +398,7 @@ def load_config(config_path: str = None) -> dict:
             "timezone": "Asia/Shanghai",
             "daily_hour": 4,
             "daily_min_memory_items": 5,
-            "daily_conversation_turn_limit": 0,
+            "daily_conversation_turn_limit": 12,
             "weekly_day": 0,
             "weekly_hour": 4,
             "check_interval_minutes": 60,
@@ -428,6 +428,9 @@ def load_config(config_path: str = None) -> dict:
             "daily_chat_memory_summary_max_tokens": 1800,
             "daily_chat_memory_candidate_model": "Qwen/Qwen3.5-4B",
             "daily_chat_memory_candidate_max_tokens": 2400,
+            "daily_activity_summary_enabled": True,
+            "daily_activity_summary_turn_limit": 0,
+            "daily_activity_summary_max_tokens": 320,
         },
         "portrait": {
             "enabled": True,

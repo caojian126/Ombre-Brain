@@ -257,6 +257,27 @@ DAILY_CHAT_MEMORY_SUMMARY_PROMPT_TEMPLATE = """你是 {ai_name} 的对话压缩�
 """
 
 
+DAILY_ACTIVITY_SUMMARY_PROMPT_TEMPLATE = """你是 {ai_name} 的当天行动摘要器。你正在为 handoff、新窗口和 dashboard 的 Recent Timeline 写一条“今天做了什么”。
+
+输入是当天原始对话还原出的 conversation_turns。user_text 永远是 {user_display_name} 的原话，assistant_text 永远是 {ai_name} 的回复。请只根据输入能证明的内容写。
+
+输出纯 JSON：
+{
+  "summary": "一句话说明今天主要推进了什么",
+  "confidence": 0.72,
+  "source_turn_ids": [1, 2],
+  "source_event_ids": [101, 102]
+}
+
+规则：
+- 这是 dashboard / handoff 用的近期事项，不是长期记忆候选，也不要输出 candidates。
+- 只写今天实际讨论、推进、排查、决定、实现或整理的事；优先项目/工作/生活动作。
+- 不写关系天气、情绪评价、昵称互动、普通寒暄、召回探针、模型自夸。
+- summary 用一句自然中文，35 到 90 字；不要 Markdown，不要列表，不要“今天的总结是”这种壳。
+- source_turn_ids / source_event_ids 只能使用输入里真实出现的 id；拿不准可留空。
+"""
+
+
 REFLECT_PROMPT = render_identity_template(REFLECT_PROMPT_TEMPLATE, generic_identity_names())
 DIARY_MEMORY_PROMPT = render_identity_template(
     DIARY_MEMORY_PROMPT_TEMPLATE.replace("{domain_options_text}", domain_prompt_options_text()),
@@ -349,7 +370,7 @@ class ReflectionEngine:
         )
         self.daily_conversation_turn_limit = max(
             0,
-            min(80, int(cfg.get("daily_conversation_turn_limit", 0))),
+            min(80, int(cfg.get("daily_conversation_turn_limit", 12))),
         )
         self.persona_events_limit = max(0, int(cfg.get("persona_events_limit", 12)))
         self.persona_events_scan_limit = max(
@@ -431,6 +452,23 @@ class ReflectionEngine:
         self.daily_chat_memory_candidate_max_tokens = max(
             300,
             min(4000, int(cfg.get("daily_chat_memory_candidate_max_tokens", 2400))),
+        )
+        self.daily_activity_summary_enabled = bool(cfg.get("daily_activity_summary_enabled", True))
+        self.daily_activity_summary_turn_limit = max(
+            0,
+            min(
+                10000,
+                int(
+                    cfg.get(
+                        "daily_activity_summary_turn_limit",
+                        cfg.get("daily_chat_memory_turn_limit", 0),
+                    )
+                ),
+            ),
+        )
+        self.daily_activity_summary_max_tokens = max(
+            80,
+            min(1000, int(cfg.get("daily_activity_summary_max_tokens", 320))),
         )
         state_dir = config.get("state_dir") or os.path.join(
             os.path.dirname(os.path.abspath(config.get("buckets_dir", "buckets"))),
@@ -535,6 +573,9 @@ class ReflectionEngine:
 
     def _daily_chat_memory_summary_prompt(self) -> str:
         return render_identity_template(DAILY_CHAT_MEMORY_SUMMARY_PROMPT_TEMPLATE, self.identity)
+
+    def _daily_activity_summary_prompt(self) -> str:
+        return render_identity_template(DAILY_ACTIVITY_SUMMARY_PROMPT_TEMPLATE, self.identity)
 
     async def enrich_bucket(
         self,
@@ -1654,6 +1695,210 @@ class ReflectionEngine:
                 except (TypeError, ValueError):
                     continue
         return max_id
+
+    def _daily_activity_summary_turns(
+        self,
+        *,
+        profile_id: str,
+        start: datetime,
+        end: datetime,
+        conversation_turn_store=None,
+        raw_event_store=None,
+    ) -> tuple[list[dict], str]:
+        limit = self.daily_activity_summary_turn_limit
+        if raw_event_store:
+            try:
+                raw_events = raw_event_store.list_events_between(
+                    start_at=start,
+                    end_at=end,
+                    limit=limit,
+                )
+            except Exception as exc:
+                logger.warning("Daily activity summary raw event read failed: %s", exc)
+                raw_events = []
+            if raw_events:
+                raw_events = [
+                    event
+                    for event in raw_events
+                    if not (
+                        isinstance(event.get("metadata"), dict)
+                        and event["metadata"].get("profile_id")
+                        and str(event["metadata"].get("profile_id")) != profile_id
+                    )
+                ]
+                turns = self._raw_event_turn_payloads(raw_events, limit=limit)
+                if turns:
+                    return turns, "raw_events"
+
+        if conversation_turn_store:
+            try:
+                raw_turns = conversation_turn_store.list_conversation_turns_between(
+                    profile_id=profile_id,
+                    start_at=start,
+                    end_at=end,
+                    limit=limit or 80,
+                )
+            except Exception as exc:
+                logger.warning("Daily activity summary turn read failed: %s", exc)
+                raw_turns = []
+            turns = self._conversation_turn_payloads(raw_turns, limit=limit)
+            if turns:
+                return turns, "conversation_turns"
+        return [], ""
+
+    async def run_daily_activity_summary(
+        self,
+        *,
+        conversation_turn_store=None,
+        raw_event_store=None,
+        persona_engine=None,
+        key: str = "",
+        force: bool = False,
+        now: datetime | None = None,
+    ) -> dict:
+        if not self.enabled or not self.daily_activity_summary_enabled:
+            return {"status": "disabled", "reason": "daily_activity_summary_off"}
+        if not conversation_turn_store and not raw_event_store:
+            return {"status": "skipped", "reason": "no_conversation_source"}
+
+        now_local = self._daily_chat_memory_target(key, now)
+        key = now_local.date().isoformat()
+        start, end = self._period_window("daily", now_local)
+        profile_id = str(getattr(persona_engine, "profile_id", "") or "default")
+        turns, turn_source = self._daily_activity_summary_turns(
+            profile_id=profile_id,
+            start=start,
+            end=end,
+            conversation_turn_store=conversation_turn_store,
+            raw_event_store=raw_event_store,
+        )
+        if not turns:
+            return {"status": "skipped", "reason": "no_conversation_turns", "date": key}
+
+        item = await self._extract_daily_activity_summary(key, turns)
+        if not item:
+            return {
+                "status": "skipped",
+                "reason": "no_activity_summary",
+                "date": key,
+                "turns": len(turns),
+                "turn_source": turn_source,
+            }
+        return {
+            "status": "ready",
+            "date": key,
+            "turns": len(turns),
+            "turn_source": turn_source,
+            "force": bool(force),
+            "activity_summary": item,
+        }
+
+    async def _extract_daily_activity_summary(self, key: str, turns: list[dict]) -> dict:
+        client = self.daily_chat_memory_client or self.client
+        if not client:
+            return {}
+        use_daily_client = client is self.daily_chat_memory_client
+        model = self.daily_chat_memory_summary_model if use_daily_client else self.model
+        fallback_turn_ids, fallback_event_ids = self._daily_chat_memory_window_source_ids(turns)
+        payload = {
+            "date": key,
+            "identity": {
+                "ai_name": self.identity["ai_name"],
+                "user_name": self.identity["user_name"],
+                "user_display_name": self.identity["user_display_name"],
+                "user_aliases": self.identity.get("user_aliases", []),
+            },
+            "source_turn_ids": fallback_turn_ids,
+            "source_event_ids": fallback_event_ids,
+            "conversation_turns": turns,
+        }
+        try:
+            response = await self._daily_chat_memory_create_completion(
+                client,
+                model=model,
+                messages=[
+                    {"role": "system", "content": self._daily_activity_summary_prompt()},
+                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+                ],
+                max_tokens=self.daily_activity_summary_max_tokens,
+                temperature=self.temperature,
+                use_daily_client=use_daily_client,
+            )
+            parsed = self._parse_json_object(self._completion_content(response) or "")
+        except Exception as exc:
+            logger.warning("Daily activity summary model failed: %s", exc)
+            return {}
+        return self._normalize_daily_activity_summary(
+            key,
+            parsed,
+            turns,
+            source_turn_ids=fallback_turn_ids,
+            source_event_ids=fallback_event_ids,
+        )
+
+    def _normalize_daily_activity_summary(
+        self,
+        key: str,
+        item: dict,
+        turns: list[dict],
+        *,
+        source_turn_ids: list[int],
+        source_event_ids: list[int],
+    ) -> dict:
+        if not isinstance(item, dict):
+            return {}
+        text = re.sub(
+            r"\s+",
+            " ",
+            strip_wikilinks(str(item.get("summary") or item.get("text") or item.get("content") or "")).strip(),
+        )
+        text = re.sub(r"^(今天的?(?:总结|摘要|主要进展)?(?:是|：|:)?\s*)", "", text).strip()
+        if not text:
+            return {}
+        if len(text) > 140:
+            text = text[:137].rstrip("，,；;、 ") + "..."
+        confidence = self._clamp(item.get("confidence", 0.65))
+        if confidence < 0.35:
+            return {}
+        raw_turn_ids = [
+            int(turn_id)
+            for turn_id in self._string_list(item.get("source_turn_ids"), limit=80)
+            if str(turn_id).isdigit()
+        ] or source_turn_ids
+        raw_event_ids = [
+            int(event_id)
+            for event_id in self._string_list(item.get("source_event_ids"), limit=160)
+            if str(event_id).isdigit()
+        ] or source_event_ids
+        sessions = [
+            str(turn.get("session_id") or "").strip()
+            for turn in turns
+            if str(turn.get("session_id") or "").strip()
+        ]
+        evidence = [{"session_id": session_id} for session_id in list(dict.fromkeys(sessions))[:3]]
+        return {
+            "timeline_id": f"daily_activity_summary:{key}",
+            "source": "daily_activity_summary",
+            "scope": "doing",
+            "text": text,
+            "evidence": evidence,
+            "source_date": key,
+            "source_dates": [key],
+            "timestamp": self._daily_activity_summary_timestamp(key, turns),
+            "confidence": confidence,
+            "source_turn_ids": raw_turn_ids[:80],
+            "source_event_ids": raw_event_ids[:160],
+        }
+
+    def _daily_activity_summary_timestamp(self, key: str, turns: list[dict]) -> str:
+        latest: datetime | None = None
+        for turn in turns:
+            parsed = self._to_local(turn.get("created_at"))
+            if parsed and (latest is None or parsed > latest):
+                latest = parsed
+        if latest:
+            return latest.isoformat(timespec="minutes")
+        return self._daily_chat_memory_created_at(key)
 
     async def run_daily_chat_memory(
         self,

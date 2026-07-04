@@ -1557,7 +1557,7 @@ async def _build_handoff_breath(max_tokens: int = 1200, session_id: str = "", de
         all_buckets = []
 
     try:
-        portrait_sections = portrait_engine.build_handoff_sections(max_recent_items=4)
+        portrait_sections = portrait_engine.build_handoff_sections(max_recent_items=3)
     except Exception as e:
         logger.warning("Handoff portrait state failed / handoff portrait 状态失败: %s", e)
         portrait_sections = {}
@@ -1571,13 +1571,13 @@ async def _build_handoff_breath(max_tokens: int = 1200, session_id: str = "", de
         recent_continuity = _merge_handoff_recent_continuity(
             portrait_recent_continuity,
             live_recent_continuity,
-            max_lines=5,
+            max_lines=3,
         )
     else:
         recent_continuity = _merge_handoff_recent_continuity(
             live_recent_continuity,
             portrait_recent_continuity,
-            max_lines=5,
+            max_lines=3,
         )
     if not recent_continuity:
         recent_continuity = _format_handoff_recent_continuity(all_buckets, limit=3)
@@ -10960,9 +10960,66 @@ async def api_daily_chat_memory_run(request):
             mode=str(body.get("mode") or ""),
             force=_bool_value(body.get("force"), False),
         )
+        try:
+            activity_result = await reflection_engine.run_daily_activity_summary(
+                conversation_turn_store=gateway_state_store,
+                raw_event_store=raw_event_store,
+                persona_engine=persona_engine,
+                key=str(body.get("date") or ""),
+                force=_bool_value(body.get("force"), False),
+            )
+            result["daily_activity_summary"] = _store_daily_activity_summary_result(activity_result)
+        except Exception as activity_exc:
+            logger.warning("Daily activity summary side-run failed: %s", activity_exc)
+            result["daily_activity_summary"] = {"status": "error", "error": str(activity_exc)}
         return JSONResponse(result)
     except Exception as e:
         logger.warning("Daily chat memory API failed: %s", e)
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+def _store_daily_activity_summary_result(result: dict, portrait_engine_arg=None) -> dict:
+    if not isinstance(result, dict):
+        return {"status": "invalid", "reason": "result_not_object"}
+    if result.get("status") != "ready":
+        return result
+    item = result.get("activity_summary") if isinstance(result.get("activity_summary"), dict) else {}
+    if not item:
+        return {**result, "status": "skipped", "reason": "empty_activity_summary"}
+    engine = portrait_engine_arg or portrait_engine
+    date_key = str(result.get("date") or item.get("source_date") or "").strip()
+    try:
+        stored = engine.upsert_recent_timeline_item(item, date_key)
+    except Exception as exc:
+        logger.warning("Daily activity summary portrait upsert failed: %s", exc)
+        return {**result, "status": "error", "error": str(exc)}
+    return {**result, "status": "stored", "portrait": stored}
+
+
+@mcp.custom_route("/api/daily-activity-summary/run", methods=["POST"])
+async def api_daily_activity_summary_run(request):
+    """Summarize what happened that day into portrait recent_timeline."""
+    from starlette.responses import JSONResponse
+    err = _require_dashboard_auth(request)
+    if err:
+        return err
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    try:
+        result = await reflection_engine.run_daily_activity_summary(
+            conversation_turn_store=gateway_state_store,
+            raw_event_store=raw_event_store,
+            persona_engine=persona_engine,
+            key=str(body.get("date") or ""),
+            force=_bool_value(body.get("force"), False),
+        )
+        return JSONResponse(_store_daily_activity_summary_result(result))
+    except Exception as e:
+        logger.warning("Daily activity summary API failed: %s", e)
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
@@ -11298,7 +11355,25 @@ async def api_config_get(request):
             "daily_conversation_turn_limit": int(
                 reflection_cfg.get(
                     "daily_conversation_turn_limit",
-                    getattr(reflection_engine, "daily_conversation_turn_limit", 0),
+                    getattr(reflection_engine, "daily_conversation_turn_limit", 12),
+                )
+            ),
+            "daily_activity_summary_enabled": bool(
+                reflection_cfg.get(
+                    "daily_activity_summary_enabled",
+                    getattr(reflection_engine, "daily_activity_summary_enabled", True),
+                )
+            ),
+            "daily_activity_summary_turn_limit": int(
+                reflection_cfg.get(
+                    "daily_activity_summary_turn_limit",
+                    getattr(reflection_engine, "daily_activity_summary_turn_limit", 0),
+                )
+            ),
+            "daily_activity_summary_max_tokens": int(
+                reflection_cfg.get(
+                    "daily_activity_summary_max_tokens",
+                    getattr(reflection_engine, "daily_activity_summary_max_tokens", 320),
                 )
             ),
             "daily_chat_memory_mode": str(
@@ -11846,11 +11921,30 @@ async def api_config_update(request):
         if "daily_conversation_turn_limit" in r:
             reflection_cfg["daily_conversation_turn_limit"] = _int_between(
                 r.get("daily_conversation_turn_limit"),
-                0,
+                12,
                 0,
                 80,
             )
             updated.append("reflection.daily_conversation_turn_limit")
+        if "daily_activity_summary_enabled" in r:
+            reflection_cfg["daily_activity_summary_enabled"] = bool(r.get("daily_activity_summary_enabled"))
+            updated.append("reflection.daily_activity_summary_enabled")
+        if "daily_activity_summary_turn_limit" in r:
+            reflection_cfg["daily_activity_summary_turn_limit"] = _int_between(
+                r.get("daily_activity_summary_turn_limit"),
+                0,
+                0,
+                10000,
+            )
+            updated.append("reflection.daily_activity_summary_turn_limit")
+        if "daily_activity_summary_max_tokens" in r:
+            reflection_cfg["daily_activity_summary_max_tokens"] = _int_between(
+                r.get("daily_activity_summary_max_tokens"),
+                320,
+                80,
+                1000,
+            )
+            updated.append("reflection.daily_activity_summary_max_tokens")
         if "daily_chat_memory_mode" in r:
             mode = str(r.get("daily_chat_memory_mode") or "auto").strip().lower()
             if mode not in {"auto", "review", "off"}:
@@ -12299,9 +12393,27 @@ async def api_config_update(request):
                 if "daily_conversation_turn_limit" in body["reflection"]:
                     sc_reflection["daily_conversation_turn_limit"] = _int_between(
                         body["reflection"].get("daily_conversation_turn_limit"),
-                        0,
+                        12,
                         0,
                         80,
+                    )
+                if "daily_activity_summary_enabled" in body["reflection"]:
+                    sc_reflection["daily_activity_summary_enabled"] = bool(
+                        body["reflection"].get("daily_activity_summary_enabled")
+                    )
+                if "daily_activity_summary_turn_limit" in body["reflection"]:
+                    sc_reflection["daily_activity_summary_turn_limit"] = _int_between(
+                        body["reflection"].get("daily_activity_summary_turn_limit"),
+                        0,
+                        0,
+                        10000,
+                    )
+                if "daily_activity_summary_max_tokens" in body["reflection"]:
+                    sc_reflection["daily_activity_summary_max_tokens"] = _int_between(
+                        body["reflection"].get("daily_activity_summary_max_tokens"),
+                        320,
+                        80,
+                        1000,
                     )
                 if "daily_chat_memory_mode" in body["reflection"]:
                     mode = str(body["reflection"].get("daily_chat_memory_mode") or "auto").strip().lower()
@@ -12690,6 +12802,7 @@ if __name__ == "__main__":
             local_embedding_engine = EmbeddingEngine(config)
             local_persona_engine = PersonaStateEngine(config)
             local_reflection_engine = ReflectionEngine(config)
+            local_portrait_engine = DailyPortraitMaintainer(config)
             local_memory_edge_store = MemoryEdgeStore(config)
             local_gateway_state_store = GatewayStateStore(os.path.join(config["buckets_dir"], "gateway_state.db"))
             while True:
@@ -12721,9 +12834,24 @@ if __name__ == "__main__":
                     )
                     local_reflection_engine.daily_conversation_turn_limit = _int_between(
                         reflection_cfg.get("daily_conversation_turn_limit"),
-                        0,
+                        12,
                         0,
                         80,
+                    )
+                    local_reflection_engine.daily_activity_summary_enabled = bool(
+                        reflection_cfg.get("daily_activity_summary_enabled", True)
+                    )
+                    local_reflection_engine.daily_activity_summary_turn_limit = _int_between(
+                        reflection_cfg.get("daily_activity_summary_turn_limit"),
+                        getattr(local_reflection_engine, "daily_activity_summary_turn_limit", 0),
+                        0,
+                        10000,
+                    )
+                    local_reflection_engine.daily_activity_summary_max_tokens = _int_between(
+                        reflection_cfg.get("daily_activity_summary_max_tokens"),
+                        getattr(local_reflection_engine, "daily_activity_summary_max_tokens", 320),
+                        80,
+                        1000,
                     )
                     mode = str(reflection_cfg.get("daily_chat_memory_mode") or "auto").strip().lower()
                     local_reflection_engine.daily_chat_memory_mode = (
@@ -12754,6 +12882,30 @@ if __name__ == "__main__":
                         local_gateway_state_store,
                         raw_event_store,
                     )
+                    now_local = local_reflection_engine._local_now()
+                    if (
+                        getattr(local_reflection_engine, "daily_activity_summary_enabled", True)
+                        and now_local.hour >= local_reflection_engine.daily_chat_memory_hour
+                    ):
+                        activity_date = (now_local - timedelta(days=1)).date().isoformat()
+                        timeline_id = f"daily_activity_summary:{activity_date}"
+                        if not local_portrait_engine.has_recent_timeline_item(
+                            date_key=activity_date,
+                            source="daily_activity_summary",
+                            timeline_id=timeline_id,
+                        ):
+                            activity_result = await local_reflection_engine.run_daily_activity_summary(
+                                conversation_turn_store=local_gateway_state_store,
+                                raw_event_store=raw_event_store,
+                                persona_engine=local_persona_engine,
+                                key=activity_date,
+                            )
+                            stored_activity = _store_daily_activity_summary_result(
+                                activity_result,
+                                portrait_engine_arg=local_portrait_engine,
+                            )
+                            if stored_activity.get("status") not in {"disabled", "skipped"}:
+                                results.append(stored_activity)
                     if results:
                         logger.info("Reflection run-due results / 反思定时结果: %s", results)
                     if reflection_cfg.get("enrich_backfill_enabled", True):

@@ -638,7 +638,7 @@ reflection:
   timezone: "Asia/Shanghai"
   daily_hour: 4                   # generate daily impression after this local hour
   daily_min_memory_items: 5        # ordinary memory/update items required before daily impression writes
-  daily_conversation_turn_limit: 0 # 0 = do not include short-term conversation_turns in daily impression material
+  daily_conversation_turn_limit: 12 # small short-term turn window for daily impression material
   daily_chat_memory_mode: auto     # auto = write selected Gateway chat memories; review = pending candidates; off = disabled
   daily_chat_memory_hour: 0        # organize the previous day's Gateway chats after local midnight
   daily_chat_memory_turn_limit: 0  # 0 = use all raw_events for that date; >0 caps restored turns
@@ -656,6 +656,9 @@ reflection:
   daily_chat_memory_summary_max_tokens: 1800
   daily_chat_memory_candidate_model: "Qwen/Qwen3.5-4B"
   daily_chat_memory_candidate_max_tokens: 2400
+  daily_activity_summary_enabled: true      # writes one "what happened today" item into portrait recent_timeline
+  daily_activity_summary_turn_limit: 0      # 0 = use all raw_events for that date; not sourced from auto-memory candidates
+  daily_activity_summary_max_tokens: 320
   persona_events_limit: 12         # selected and deduped; persona events supplement daily weather only
   persona_events_scan_limit: 80
   weekly_enabled: false            # weekly impressions are off by default; daily impressions remain

@@ -1406,6 +1406,86 @@ async def test_daily_chat_memory_prefers_full_raw_events_by_date(test_config):
 
 
 @pytest.mark.asyncio
+async def test_daily_activity_summary_prefers_raw_events_not_auto_memory_candidates(test_config):
+    cfg = _no_api_config(test_config)
+    cfg["identity"] = {
+        "ai_name": "Haven",
+        "user_name": "Xiaoyu",
+        "user_display_name": "池又雨",
+        "user_aliases": ["小雨"],
+    }
+    engine = ReflectionEngine(cfg)
+    engine.daily_chat_memory_client = RecordingChatClient(
+        json.dumps(
+            {
+                "summary": "小雨确认 handoff 只挑三条最新，并把当天做了什么写进 Recent Timeline。",
+                "confidence": 0.78,
+                "source_event_ids": [301, 302],
+            },
+            ensure_ascii=False,
+        )
+    )
+    now = datetime(2026, 7, 4, 23, 59, tzinfo=ZoneInfo("Asia/Shanghai"))
+
+    class RawEventStore:
+        def list_events_between(self, *, start_at, end_at, limit):
+            return [
+                {
+                    "id": 301,
+                    "role": "user",
+                    "text": "handoff 只挑三条最新，dashboard 存到 Recent Timeline。",
+                    "created_at": "2026-07-04T20:00:00+08:00",
+                    "conversation_id": "daily-chat",
+                    "session_id": "daily-chat",
+                    "client": "gateway",
+                    "metadata": {"profile_id": "haven_xiaoyu", "round_id": 1},
+                },
+                {
+                    "id": 302,
+                    "role": "assistant",
+                    "text": "我会从 raw_events 直接总结，不从自动记忆候选取。",
+                    "created_at": "2026-07-04T20:00:00+08:00",
+                    "conversation_id": "daily-chat",
+                    "session_id": "daily-chat",
+                    "client": "gateway",
+                    "metadata": {"profile_id": "haven_xiaoyu", "round_id": 1},
+                },
+            ]
+
+    class ConversationTurnStore:
+        def list_conversation_turns_between(self, **kwargs):
+            raise AssertionError("activity summary should not fall back when raw_events exist")
+
+    class Persona:
+        profile_id = "haven_xiaoyu"
+
+    result = await engine.run_daily_activity_summary(
+        conversation_turn_store=ConversationTurnStore(),
+        raw_event_store=RawEventStore(),
+        persona_engine=Persona(),
+        now=now,
+    )
+
+    assert result["status"] == "ready"
+    assert result["turn_source"] == "raw_events"
+    item = result["activity_summary"]
+    assert item["timeline_id"] == "daily_activity_summary:2026-07-04"
+    assert item["source"] == "daily_activity_summary"
+    assert item["scope"] == "doing"
+    assert item["source_event_ids"] == [301, 302]
+    assert item["evidence"] == [{"session_id": "daily-chat"}]
+    assert "Recent Timeline" in item["text"]
+    call = engine.daily_chat_memory_client.calls[0]
+    assert call["model"] == "Qwen/Qwen3.5-4B"
+    assert call["extra_body"] == {"enable_thinking": False}
+    assert "不要输出 candidates" in call["messages"][0]["content"]
+    payload = json.loads(call["messages"][1]["content"])
+    assert "window_summaries" not in payload
+    assert "candidates" not in payload
+    assert payload["conversation_turns"][0]["raw_event_ids"] == [301, 302]
+
+
+@pytest.mark.asyncio
 async def test_daily_chat_memory_summarizes_overlapping_windows_for_review(test_config, monkeypatch):
     cfg = _no_api_config(test_config)
     cfg["identity"] = {

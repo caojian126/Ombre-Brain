@@ -31,7 +31,7 @@ def test_load_config_defaults_relationship_weather_off(tmp_path):
     assert config["reflection"]["edge_backfill_limit"] == 5
     assert config["reflection"]["daily_enabled"] is True
     assert config["reflection"]["daily_min_memory_items"] == 5
-    assert config["reflection"]["daily_conversation_turn_limit"] == 0
+    assert config["reflection"]["daily_conversation_turn_limit"] == 12
     assert config["reflection"]["daily_chat_memory_mode"] == "auto"
     assert config["reflection"]["daily_chat_memory_hour"] == 0
     assert config["reflection"]["daily_chat_memory_turn_limit"] == 0
@@ -49,6 +49,9 @@ def test_load_config_defaults_relationship_weather_off(tmp_path):
     assert config["reflection"]["daily_chat_memory_summary_max_tokens"] == 1800
     assert config["reflection"]["daily_chat_memory_candidate_model"] == "Qwen/Qwen3.5-4B"
     assert config["reflection"]["daily_chat_memory_candidate_max_tokens"] == 2400
+    assert config["reflection"]["daily_activity_summary_enabled"] is True
+    assert config["reflection"]["daily_activity_summary_turn_limit"] == 0
+    assert config["reflection"]["daily_activity_summary_max_tokens"] == 320
     assert "daily_chat_memory_summary_thinking_mode" not in config["reflection"]
     assert "daily_chat_memory_candidate_thinking_mode" not in config["reflection"]
     assert "daily_chat_memory_thinking_budget" not in config["reflection"]

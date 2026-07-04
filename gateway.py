@@ -98,6 +98,7 @@ from word_map import WordMapStore
 logger = logging.getLogger("ombre_brain.gateway")
 FAVORITE_MEMORY_MARKER = "[[ombre:favorite]]"
 RETRYABLE_UPSTREAM_STATUS_CODES = {401, 403, 429, 500, 502, 503, 504}
+DUPLICATE_CONVERSATION_TURN_WINDOW_SECONDS = 120
 DOMAIN_SENTINEL_ALLOWED_DOMAINS = frozenset(
     {
         "relationship",
@@ -2546,18 +2547,31 @@ class GatewayService:
         current_user_query = self._extract_current_turn_user_query(messages)
         is_new_user_turn = bool(current_user_query)
         has_handoff_context = self._messages_contain_handoff_context(messages)
-        is_handoff_trigger_query = self._query_is_handoff_trigger(current_user_query)
         is_session_start = self.state_store.get_last_success_at(session_id) is None
-        is_session_start_handoff_query = (
-            is_session_start
-            and not has_handoff_context
-            and self._query_prefers_session_start_handoff(current_user_query)
-        )
-        needs_handoff_first = is_handoff_trigger_query or is_session_start_handoff_query
         just_now_context_requested = (
             self.just_now_context_enabled
             and self._query_requests_just_now_context(current_user_query)
         )
+        is_handoff_trigger_query = self._query_is_handoff_trigger(current_user_query)
+        handoff_just_now_requested = (
+            just_now_context_requested
+            and self._query_has_handoff_transition_marker(current_user_query)
+        )
+        is_session_start_handoff_query = (
+            is_session_start
+            and not has_handoff_context
+            and not handoff_just_now_requested
+            and self._query_prefers_session_start_handoff(current_user_query)
+        )
+        if is_handoff_trigger_query:
+            handoff_skip_reason = "handoff_trigger"
+        elif handoff_just_now_requested:
+            handoff_skip_reason = "handoff_trigger_with_just_now"
+        elif is_session_start_handoff_query:
+            handoff_skip_reason = "session_start_handoff"
+        else:
+            handoff_skip_reason = ""
+        needs_handoff_first = bool(handoff_skip_reason)
         date_recall_requested = (
             self.date_recall_enabled
             and self._query_requests_date_recall(current_user_query)
@@ -2637,9 +2651,7 @@ class GatewayService:
                 or (low_signal_auto_recall and not sentinel_search)
             )
             if needs_handoff_first:
-                query_planner_debug["skip_reason"] = (
-                    "handoff_trigger" if is_handoff_trigger_query else "session_start_handoff"
-                )
+                query_planner_debug["skip_reason"] = handoff_skip_reason
                 if is_session_start_handoff_query and not is_handoff_trigger_query:
                     handoff_tool_hint = (
                         "First turn of a new session with a date-continuity question: call the memory tool "
@@ -2653,6 +2665,12 @@ class GatewayService:
                         "or breath(mode=\"handoff\") before replying. Do not call breath(query=\"新窗口\") "
                         "for this literal signal, and do not write/hold it unless the user explicitly asks."
                     )
+                if handoff_just_now_requested:
+                    stage_started_at = time.perf_counter()
+                    just_now_context, just_now_context_debug = self._build_just_now_chat_context(
+                        current_user_query,
+                    )
+                    mark_step("just_now_context", stage_started_at)
             elif just_now_context_requested:
                 query_planner_debug["skip_reason"] = "just_now_context"
                 stage_started_at = time.perf_counter()
@@ -2708,7 +2726,7 @@ class GatewayService:
                     if just_now_context_requested and not needs_handoff_first
                     else "date_recall"
                     if date_recall_requested and not needs_handoff_first
-                    else ("handoff_trigger" if is_handoff_trigger_query else "session_start_handoff")
+                    else handoff_skip_reason
                 )
             else:
                 stage_started_at = time.perf_counter()
@@ -2809,7 +2827,7 @@ class GatewayService:
                 date_persona_trace_debug["skip_reason"] = (
                     "just_now_context"
                     if just_now_context_requested and not needs_handoff_first
-                    else ("handoff_trigger" if is_handoff_trigger_query else "session_start_handoff")
+                    else handoff_skip_reason
                 )
             elif not date_persona_trace_requested:
                 date_persona_trace_debug["skip_reason"] = (
@@ -3728,9 +3746,25 @@ class GatewayService:
         assistant_text = self._conversation_turn_original_text(assistant_text, role="assistant")
         if not user_text and not assistant_text:
             return
+        profile_id = str(getattr(self.persona_engine, "profile_id", "") or "default")
+        if self._is_recent_duplicate_conversation_turn(
+            profile_id=profile_id,
+            session_id=session_id,
+            user_text=user_text,
+            assistant_text=assistant_text,
+            model=model,
+            client=client,
+            route=route,
+        ):
+            logger.info(
+                "Gateway conversation turn skipped as duplicate retry | session=%s round=%s",
+                session_id,
+                round_id,
+            )
+            return
         try:
             self.state_store.record_conversation_turn(
-                profile_id=str(getattr(self.persona_engine, "profile_id", "") or "default"),
+                profile_id=profile_id,
                 session_id=session_id,
                 round_id=round_id,
                 user_text=self._clip_text(user_text, 4000),
@@ -3756,6 +3790,45 @@ class GatewayService:
             client=client,
             route=route,
         )
+
+    def _is_recent_duplicate_conversation_turn(
+        self,
+        *,
+        profile_id: str,
+        session_id: str,
+        user_text: str,
+        assistant_text: str,
+        model: str,
+        client: str,
+        route: str,
+    ) -> bool:
+        try:
+            turns = self.state_store.list_recent_conversation_turns(
+                profile_id=profile_id,
+                session_id=session_id,
+                limit=1,
+                hours=DUPLICATE_CONVERSATION_TURN_WINDOW_SECONDS / 3600,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Gateway duplicate conversation turn lookup failed | session=%s error=%s",
+                session_id,
+                exc,
+            )
+            return False
+        for turn in turns:
+            if self._clean_conversation_turn_text(turn.get("user_text", "")) != user_text:
+                continue
+            if self._clean_conversation_turn_text(turn.get("assistant_text", "")) != assistant_text:
+                continue
+            if str(turn.get("model") or "") != str(model or ""):
+                continue
+            if str(turn.get("client") or "") != str(client or ""):
+                continue
+            if str(turn.get("route") or "") != str(route or ""):
+                continue
+            return True
+        return False
 
     def _conversation_turn_original_text(self, text: str, *, role: str) -> str:
         if not text:
@@ -6115,6 +6188,15 @@ class GatewayService:
             "newwindow",
             "sessionstart",
         }
+
+    @staticmethod
+    def _query_has_handoff_transition_marker(query_text: str) -> bool:
+        compact = re.sub(r"[\s!！?？。.,，、:：;；~～…_\-]+", "", str(query_text or "").strip().lower())
+        if not compact:
+            return False
+        if GatewayService._query_is_handoff_trigger(query_text):
+            return True
+        return any(marker in compact for marker in ("换窗", "开新窗"))
 
     def _query_prefers_session_start_handoff(self, query_text: str) -> bool:
         text = str(query_text or "").strip()

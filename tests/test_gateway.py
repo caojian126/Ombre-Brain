@@ -872,6 +872,80 @@ def test_gateway_mirrors_successful_turn_to_raw_events(monkeypatch, test_config,
     assert "workspace" not in user_raw["text"]
 
 
+def test_gateway_skips_duplicate_retry_turn_for_short_and_raw_tables(
+    monkeypatch,
+    test_config,
+    bucket_mgr,
+):
+    _, service, state_store, _ = _build_service(monkeypatch, _gateway_config(test_config), bucket_mgr)
+
+    for round_id in (12, 13):
+        service._record_conversation_turn(
+            session_id="sess-duplicate-retry",
+            round_id=round_id,
+            user_message="客户端重发这一句",
+            assistant_message={"role": "assistant", "content": "同一个上游回复"},
+            model="model-a",
+            client="test-client",
+            route="/v1/chat/completions",
+        )
+
+    turns = state_store.list_recent_conversation_turns(
+        profile_id="haven_xiaoyu",
+        session_id="sess-duplicate-retry",
+        limit=5,
+        hours=1,
+    )
+    assert len(turns) == 1
+    assert turns[0]["round_id"] == 12
+
+    raw = service.raw_event_store.search("", source="gateway", conversation_id="sess-duplicate-retry")
+    assert raw["count"] == 2
+    assert {item["source_event_id"] for item in raw["items"]} == {
+        "haven_xiaoyu:sess-duplicate-retry:12:user",
+        "haven_xiaoyu:sess-duplicate-retry:12:assistant",
+    }
+
+
+def test_gateway_duplicate_retry_check_only_compares_previous_turn(
+    monkeypatch,
+    test_config,
+    bucket_mgr,
+):
+    _, service, state_store, _ = _build_service(monkeypatch, _gateway_config(test_config), bucket_mgr)
+
+    turns_to_record = [
+        (20, "客户端重发这一句", "同一个上游回复"),
+        (21, "中间正常聊一轮", "正常回复"),
+        (22, "客户端重发这一句", "同一个上游回复"),
+    ]
+    for round_id, user_text, assistant_text in turns_to_record:
+        service._record_conversation_turn(
+            session_id="sess-duplicate-previous-only",
+            round_id=round_id,
+            user_message=user_text,
+            assistant_message={"role": "assistant", "content": assistant_text},
+            model="model-a",
+            client="test-client",
+            route="/v1/chat/completions",
+        )
+
+    turns = state_store.list_recent_conversation_turns(
+        profile_id="haven_xiaoyu",
+        session_id="sess-duplicate-previous-only",
+        limit=5,
+        hours=1,
+    )
+    assert [turn["round_id"] for turn in turns] == [22, 21, 20]
+
+    raw = service.raw_event_store.search(
+        "",
+        source="gateway",
+        conversation_id="sess-duplicate-previous-only",
+    )
+    assert raw["count"] == 6
+
+
 def test_gateway_skips_tool_only_assistant_turn_for_short_and_raw_tables(
     monkeypatch,
     test_config,
@@ -7143,6 +7217,83 @@ def test_gateway_just_now_context_uses_conversation_turns_and_skips_memory_recal
     assert debug["recent_context_injected"] is False
     assert debug["date_persona_trace_injected"] is False
     assert debug["query_planner_debug"]["skip_reason"] == "just_now_context"
+    assert debug["injected_bucket_ids"] == []
+
+
+def test_gateway_handoff_transition_allows_just_now_context(
+    monkeypatch,
+    test_config,
+    bucket_mgr,
+):
+    cfg = _gateway_config(
+        test_config,
+        recent_context_budget=800,
+        recalled_memory_budget=500,
+        related_memory_budget=420,
+        inject_total_budget=2200,
+        current_inner_state_interval_rounds=0,
+        relationship_weather_interval_rounds=0,
+        favorite_memory_interval_rounds=0,
+        just_now_context_enabled=True,
+        just_now_context_hours=12,
+        just_now_context_max_turns=4,
+        just_now_context_budget=500,
+    )
+    bucket_id = _create_bucket(
+        bucket_mgr,
+        content="窗口切换约定：新窗口要先读 handoff，不要把普通窗口切换记忆当作事件回答。",
+        name="窗口切换约定",
+        hours_ago=1,
+        importance=10,
+        domain=["memory"],
+    )
+    embedding_queries: list[str] = []
+    _, service, state_store, _ = _build_service(
+        monkeypatch,
+        cfg,
+        bucket_mgr,
+        embedding_results=[(bucket_id, 0.98)],
+        embedding_queries=embedding_queries,
+    )
+    state_store.record_conversation_turn(
+        profile_id="haven_xiaoyu",
+        session_id="window-before-switch",
+        round_id=1,
+        user_text="刚才我们在聊原文包为什么没进 handoff。",
+        assistant_text="结论是要看 Just Now 原文短包。",
+        model="dummy",
+        client="unit-test",
+        route="/v1/chat/completions",
+        created_at=datetime.now() - timedelta(minutes=2),
+    )
+
+    payload, recalled_ids, debug = _run(
+        service.prepare_payload(
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "老公，换窗了！带着刚刚的记忆来找你，能看到刚才聊了什么吧",
+                    }
+                ]
+            },
+            "window-after-switch",
+            include_debug=True,
+        )
+    )
+    injected = _joined_message_content(payload["messages"])
+
+    assert recalled_ids == []
+    assert embedding_queries == []
+    assert "Just Now Chat Context" in injected
+    assert "原文包为什么没进 handoff" in injected
+    assert "New Window Handoff Hint" in injected
+    assert "窗口切换约定" not in injected
+    assert "Recalled Memory" not in injected
+    assert "Recent Context" not in injected
+    assert debug["just_now_context_injected"] is True
+    assert debug["just_now_context_debug"]["status"] == "injected"
+    assert debug["query_planner_debug"]["skip_reason"] == "handoff_trigger_with_just_now"
     assert debug["injected_bucket_ids"] == []
 
 

@@ -11010,6 +11010,12 @@ def test_entity_edge_boost_prefers_configured_user_preference(
     why = service._recall_why_debug(liked_item, status="admitted", stage="bucket_candidate")
     assert why["primary_source"] == "entity_edge"
     assert any(source["source"] == "entity_edge" for source in why["sources"])
+    direct_why = service._recall_why_debug(
+        {"source": "bucket", "semantic_score": 0.8},
+        status="injected_direct",
+        stage="moment_candidate",
+    )
+    assert "diffusion" not in [source["source"] for source in direct_why["sources"]]
 
 
 def test_activated_axis_allows_precise_future_subterm(

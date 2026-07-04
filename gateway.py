@@ -14868,7 +14868,7 @@ class GatewayService:
             )
         if rerank_score is not None:
             add_source("rerank", score=self._safe_float(rerank_score, 0.0))
-        if stage == "diffusion_candidate" or item.get("why") or item.get("source"):
+        if stage == "diffusion_candidate" or item.get("why"):
             add_source(
                 "diffusion",
                 why=str(item.get("why") or ""),

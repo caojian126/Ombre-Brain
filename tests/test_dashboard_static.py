@@ -569,11 +569,16 @@ def test_dashboard_exposes_chat_memory_tab_module():
     assert "runDailyChatMemory" not in module
     assert "document.getElementById('chat-memory-view').style.display = target === 'chat-memory' ? '' : 'none';" in html
     assert "window.initDailyChatMemoryTab" in module
-    assert "loadDashboardModule('/dashboard-assets/chat-memory.js');" in html
+    assert "loadDashboardModule('/dashboard-assets/chat-memory.js?v=20260706-chat-memory-edit');" in html
     assert "BASE + '/api/daily-chat-memory/run'" not in html
     assert "dailyChatMemoryApiBase() + '/api/daily-chat-memory/run'" not in module
     assert "dailyChatMemoryApiBase() + '/api/daily-chat-memory/pending?limit=20'" in module
     assert "dailyChatMemoryApiBase() + '/api/daily-chat-memory/confirm'" in module
+    assert "'<strong>' + esc(candidate.title || id) + '</strong>'" in module
+    assert "'<div class=\"chat-memory-card-body\">' + esc(candidate.content || '') + '</div>'" in module
+    assert "'<div class=\"chat-memory-edit-panel\" hidden>'" in module
+    assert "toggleDailyChatMemoryEdit(this)" in module
+    assert "card.getAttribute('data-editing') === 'true'" in module
     assert "data-field=\"title\"" in module
     assert "data-field=\"content\"" in module
     assert "body.edits[id] = edits;" in module

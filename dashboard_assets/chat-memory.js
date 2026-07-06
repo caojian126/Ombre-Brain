@@ -32,33 +32,38 @@
       var candidate = item.candidate || {};
       var id = item.id || '';
       return '<div class="chat-memory-card" data-candidate-id="' + escAttr(id) + '">' +
-        '<label class="chat-memory-edit-field">标题' +
-          '<input type="text" data-field="title" value="' + escAttr(candidate.title || id) + '" />' +
-        '</label>' +
-        '<label class="chat-memory-edit-field">正文' +
-          '<textarea data-field="content" rows="4">' + esc(candidate.content || '') + '</textarea>' +
-        '</label>' +
-        '<div class="chat-memory-edit-grid">' +
-          '<label class="chat-memory-edit-field">类型' +
-            '<input type="text" data-field="kind" value="' + escAttr(candidate.kind || 'memory') + '" />' +
-          '</label>' +
-          '<label class="chat-memory-edit-field">域' +
-            '<input type="text" data-field="domain" value="' + escAttr(listText(candidate.domain)) + '" />' +
-          '</label>' +
-          '<label class="chat-memory-edit-field">标签' +
-            '<input type="text" data-field="tags" value="' + escAttr(listText(candidate.tags)) + '" />' +
-          '</label>' +
-          '<label class="chat-memory-edit-field">重要度' +
-            '<input type="number" min="1" max="10" data-field="importance" value="' + escAttr(candidate.importance || '') + '" />' +
-          '</label>' +
-          '<label class="chat-memory-edit-field">置信度' +
-            '<input type="number" min="0" max="1" step="0.01" data-field="confidence" value="' + escAttr(candidate.confidence || '') + '" />' +
-          '</label>' +
-        '</div>' +
+        '<strong>' + esc(candidate.title || id) + '</strong>' +
+        '<div class="chat-memory-card-body">' + esc(candidate.content || '') + '</div>' +
         '<div class="chat-memory-card-meta">' +
           esc((candidate.kind || 'memory') + ' · ' + (item.date || '') + ' · confidence ' + (candidate.confidence || '')) +
         '</div>' +
+        '<div class="chat-memory-edit-panel" hidden>' +
+          '<label class="chat-memory-edit-field">标题' +
+            '<input type="text" data-field="title" value="' + escAttr(candidate.title || id) + '" />' +
+          '</label>' +
+          '<label class="chat-memory-edit-field">正文' +
+            '<textarea data-field="content" rows="4">' + esc(candidate.content || '') + '</textarea>' +
+          '</label>' +
+          '<div class="chat-memory-edit-grid">' +
+            '<label class="chat-memory-edit-field">类型' +
+              '<input type="text" data-field="kind" value="' + escAttr(candidate.kind || 'memory') + '" />' +
+            '</label>' +
+            '<label class="chat-memory-edit-field">域' +
+              '<input type="text" data-field="domain" value="' + escAttr(listText(candidate.domain)) + '" />' +
+            '</label>' +
+            '<label class="chat-memory-edit-field">标签' +
+              '<input type="text" data-field="tags" value="' + escAttr(listText(candidate.tags)) + '" />' +
+            '</label>' +
+            '<label class="chat-memory-edit-field">重要度' +
+              '<input type="number" min="1" max="10" data-field="importance" value="' + escAttr(candidate.importance || '') + '" />' +
+            '</label>' +
+            '<label class="chat-memory-edit-field">置信度' +
+              '<input type="number" min="0" max="1" step="0.01" data-field="confidence" value="' + escAttr(candidate.confidence || '') + '" />' +
+            '</label>' +
+          '</div>' +
+        '</div>' +
         '<div class="chat-memory-card-actions">' +
+          '<button type="button" onclick="toggleDailyChatMemoryEdit(this)">编辑</button>' +
           '<button type="button" onclick="confirmDailyChatMemory(this, \'' + jsString(id) + '\', \'confirm\')">写入</button>' +
           '<button type="button" class="danger" onclick="confirmDailyChatMemory(this, \'' + jsString(id) + '\', \'reject\')">拒绝</button>' +
         '</div>' +
@@ -91,6 +96,15 @@
     return edits;
   }
 
+  function toggleDailyChatMemoryEdit(button) {
+    var card = button && button.closest ? button.closest('.chat-memory-card') : null;
+    var panel = card && card.querySelector ? card.querySelector('.chat-memory-edit-panel') : null;
+    if (!panel) return;
+    panel.hidden = !panel.hidden;
+    if (card) card.setAttribute('data-editing', panel.hidden ? 'false' : 'true');
+    button.textContent = panel.hidden ? '编辑' : '收起编辑';
+  }
+
   async function confirmDailyChatMemory(buttonOrId, idOrAction, maybeAction) {
     var button = typeof buttonOrId === 'object' ? buttonOrId : null;
     var id = button ? idOrAction : buttonOrId;
@@ -105,7 +119,7 @@
       };
       if (!isReject) {
         var card = button && button.closest ? button.closest('.chat-memory-card') : null;
-        var edits = readDailyChatMemoryEdits(card);
+        var edits = card && card.getAttribute('data-editing') === 'true' ? readDailyChatMemoryEdits(card) : null;
         if (edits) {
           body.edits = {};
           body.edits[id] = edits;
@@ -135,6 +149,7 @@
   window.loadDailyChatMemoryPending = loadDailyChatMemoryPending;
   window.renderDailyChatMemoryPending = renderDailyChatMemoryPending;
   window.confirmDailyChatMemory = confirmDailyChatMemory;
+  window.toggleDailyChatMemoryEdit = toggleDailyChatMemoryEdit;
   window.initDailyChatMemoryTab = initDailyChatMemoryTab;
 
   if (typeof getActiveTab === 'function' && getActiveTab() === 'chat-memory') {

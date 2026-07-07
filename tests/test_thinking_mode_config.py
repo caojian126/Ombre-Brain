@@ -119,8 +119,9 @@ async def test_dehydrator_analyze_uses_canonical_domain_prompt_and_normalizes(te
     result = await dehydrator._api_analyze("Ombre-Brain 的 Gateway 记忆改造")
     system_prompt = client.calls[0]["messages"][0]["content"]
 
-    assert result["domain"] == ["project"]
+    assert result["domain"] == ["tech"]
     assert result["tags"] == ["Ombre", "代码"]
+    assert "tech" in system_prompt
     assert "project" in system_prompt
     assert "inner" in system_prompt
     assert "project.companion_system" not in system_prompt

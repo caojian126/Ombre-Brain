@@ -18,10 +18,10 @@ def test_normalize_memory_metadata_splits_domain_kind_status_and_flags():
     view = normalize_memory_metadata(bucket)
 
     assert view == {
-        "canonical_domain": "project",
-        "domain_parent": "project",
-        "domain_label": "项目",
-        "domain_parent_label": "项目",
+        "canonical_domain": "tech",
+        "domain_parent": "tech",
+        "domain_label": "技术",
+        "domain_parent_label": "技术",
         "kind": "source_record",
         "status_view": "protected",
         "flags": ["pinned", "source_record"],
@@ -68,7 +68,7 @@ def test_normalize_memory_metadata_keeps_scene_out_of_domain():
     assert view["legacy_domain"] == ["亲密", "代码"]
 
 
-def test_transaction_legacy_domain_maps_to_project():
+def test_transaction_legacy_domain_maps_to_life():
     bucket = {
         "metadata": {
             "domain": ["事务"],
@@ -79,9 +79,27 @@ def test_transaction_legacy_domain_maps_to_project():
 
     view = normalize_memory_metadata(bucket)
 
-    assert normalize_domain_key("事务") == "project"
-    assert view["canonical_domain"] == "project"
-    assert view["domain_label"] == "项目"
+    assert normalize_domain_key("事务") == "life"
+    assert view["canonical_domain"] == "life"
+    assert view["domain_label"] == "生活"
+
+
+def test_technical_legacy_domain_maps_to_tech():
+    bucket = {
+        "metadata": {
+            "domain": ["代码"],
+            "tags": [],
+            "type": "dynamic",
+        }
+    }
+
+    view = normalize_memory_metadata(bucket)
+
+    assert normalize_domain_key("代码") == "tech"
+    assert normalize_domain_key("project_code") == "tech"
+    assert normalize_domain_key("hardware_protocol") == "tech"
+    assert view["canonical_domain"] == "tech"
+    assert view["domain_label"] == "技术"
 
 
 def test_inner_legacy_domain_is_canonical():

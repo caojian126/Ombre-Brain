@@ -447,7 +447,7 @@
         "unless_domain": "life"
       },
       {
-        "domains": ["project"],
+        "domains": ["tech"],
         "terms": ["ombre", "gateway", "bridge", "mcp", "recall", "记忆系统", "陪伴系统", "mistroom", "voice", "代码"]
       },
       {

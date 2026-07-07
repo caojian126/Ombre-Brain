@@ -126,8 +126,36 @@ DOMAIN_SENTINEL_ALLOWED_DOMAINS = frozenset(
         "relationship",
         "intimacy",
         "life",
+        "tech",
         "project",
         "general",
+    }
+)
+TECH_RECALL_GENERIC_ANCHOR_TERMS = frozenset(
+    {
+        "code",
+        "debug",
+        "bug",
+        "id",
+        "key",
+        "project",
+        "tech",
+        "technical",
+        "代码",
+        "技术",
+        "项目",
+        "工程",
+        "系统",
+        "问题",
+        "失败",
+        "节点",
+        "调试",
+        "原文",
+        "关键词",
+        "召回",
+        "记忆",
+        "注入",
+        "测试",
     }
 )
 MEMORY_DETAIL_REQUEST_RE = re.compile(
@@ -12295,7 +12323,7 @@ class GatewayService:
                         "Classify the user's latest message for memory recall routing. "
                         "Return JSON only with keys: message_type, primary_domain, domains, query, confidence, should_recall, reason. "
                         "message_type must be one of: auto_trigger, troubleshooting, recall_request, ordinary_chat, other. "
-                        "primary_domain must be one of: relationship, intimacy, life, project, general. "
+                        "primary_domain must be one of: relationship, intimacy, life, tech, project, general. "
                         "domains is optional but if present must use only those same domain keys. "
                         "First decide whether the message is an automatic trigger/status payload or a troubleshooting/debugging message; if so set message_type accordingly and should_recall=false. "
                         "For ordinary chat without a locatable memory need, set should_recall=false. "
@@ -14317,6 +14345,73 @@ class GatewayService:
             return None
         return "activated_axis_mismatch", self._axis_lite_debug(query_plan, matched=False)
 
+    def _bucket_is_tech_domain(self, bucket: dict | None) -> bool:
+        if not isinstance(bucket, dict):
+            return False
+        view = normalize_memory_metadata(bucket)
+        return str(view.get("domain_parent") or view.get("canonical_domain") or "") == "tech"
+
+    def _moment_is_tech_domain(self, moment: dict | None) -> bool:
+        if not isinstance(moment, dict):
+            return False
+        view = normalize_memory_metadata(self._reading_note_bucket_view(None, moment))
+        return str(view.get("domain_parent") or view.get("canonical_domain") or "") == "tech"
+
+    def _tech_anchor_term_is_specific(self, term: object) -> bool:
+        key = self._compact_lookup_key(term)
+        if not key or key in TECH_RECALL_GENERIC_ANCHOR_TERMS:
+            return False
+        return len(key) >= 2
+
+    def _query_has_tech_recall_anchor(self, query: str) -> bool:
+        text = str(query or "").strip()
+        if not text:
+            return False
+        if self._extract_explicit_bucket_ids_from_text(text) or self._extract_explicit_moment_ids_from_text(text):
+            return True
+        if (
+            self._query_has_explicit_recall_marker(text)
+            or self._query_requests_date_recall(text)
+            or self._query_requests_direct_detail(text)
+            or self.recall_policy.is_detail_read_query(text)
+        ):
+            return True
+        if any(self._tech_anchor_term_is_specific(phrase) for phrase in extract_protected_phrases(text)):
+            return True
+        return any(self._tech_anchor_term_is_specific(term) for term in self._locatable_query_terms(text))
+
+    def _item_has_direct_tech_evidence(self, item: dict) -> bool:
+        if not isinstance(item, dict):
+            return False
+        return bool(
+            item.get("planner_lexical_match")
+            or item.get("exact_anchor_match")
+            or item.get("rare_name_match")
+            or item.get("low_frequency_match")
+            or item.get("explicit_relation_edge_match")
+            or self._entity_edge_direct_signal(item)
+        )
+
+    def _tech_domain_recall_rejection(
+        self,
+        query: str,
+        item: dict,
+        *,
+        node: dict | None = None,
+    ) -> dict[str, Any] | None:
+        if self._item_has_direct_tech_evidence(item):
+            return None
+        if self._query_has_tech_recall_anchor(query):
+            return None
+        return {
+            "tech_domain_guard": True,
+            "reason": "tech_domain_without_query_anchor",
+            "locatable_terms": self._locatable_query_terms(query),
+            "canonical_domain": "tech" if node is None else str(
+                normalize_memory_metadata(node).get("canonical_domain") or ""
+            ),
+        }
+
     def _admit_bucket_for_recall(self, query: str, item: dict) -> bool:
         bucket = item.get("bucket") if isinstance(item, dict) else None
         if not isinstance(bucket, dict):
@@ -14370,6 +14465,15 @@ class GatewayService:
             }
         else:
             item["recall_policy_debug"] = decision.debug
+        if decision.admit_direct and self._bucket_is_tech_domain(bucket):
+            tech_rejection = self._tech_domain_recall_rejection(query, item, node=bucket)
+            if tech_rejection:
+                item["admission_reason"] = "tech_domain_without_query_anchor"
+                item["recall_policy_debug"] = {
+                    **(item.get("recall_policy_debug") if isinstance(item.get("recall_policy_debug"), dict) else {}),
+                    **tech_rejection,
+                }
+                return False
         if decision.admit_direct and decision.reason == "non_explicit_query":
             if not self._bucket_has_reliable_recall_signal(query, item):
                 item["admission_reason"] = "low_recall_evidence"
@@ -14492,6 +14596,15 @@ class GatewayService:
             }
         else:
             moment["recall_policy_debug"] = decision.debug
+        if decision.admit_direct and self._moment_is_tech_domain(moment):
+            tech_rejection = self._tech_domain_recall_rejection(query, moment)
+            if tech_rejection:
+                moment["admission_reason"] = "tech_domain_without_query_anchor"
+                moment["recall_policy_debug"] = {
+                    **(moment.get("recall_policy_debug") if isinstance(moment.get("recall_policy_debug"), dict) else {}),
+                    **tech_rejection,
+                }
+                return False
         if (
             decision.admit_direct
             and decision.reason == "non_explicit_query"

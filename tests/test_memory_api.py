@@ -234,8 +234,8 @@ async def test_dashboard_bucket_payloads_include_read_only_metadata_view(monkeyp
     list_payload = json.loads(list_response.body)
     row = next(item for item in list_payload if item["id"] == bucket_id)
 
-    assert row["canonical_domain"] == "project"
-    assert row["domain_label"] == "项目"
+    assert row["canonical_domain"] == "tech"
+    assert row["domain_label"] == "技术"
     assert row["kind"] == "source_record"
     assert row["status_view"] == "unresolved"
     assert row["legacy_domain"] == ["AI", "未解决"]
@@ -2653,6 +2653,76 @@ async def test_comment_bucket_uses_configured_ai_author(monkeypatch, bucket_mgr,
     bucket = await bucket_mgr.get(bucket_id)
 
     assert bucket["metadata"]["comments"][0]["author"] == "Echo"
+
+
+@pytest.mark.asyncio
+async def test_delete_bucket_comment_removes_haven_comment_bucket_ring(monkeypatch, bucket_mgr, decay_eng):
+    import server
+
+    bucket_id = await bucket_mgr.create(
+        content="源记忆正文。",
+        name="删年轮",
+        domain=["恋爱"],
+        last_active="2026-05-04T08:00:00+00:00",
+    )
+    monkeypatch.setattr(server, "bucket_mgr", bucket_mgr)
+    monkeypatch.setattr(server, "decay_engine", decay_eng)
+    embedding_engine = CapturingEmbeddingEngine()
+    monkeypatch.setattr(server, "embedding_engine", embedding_engine)
+
+    commented = await server.comment_bucket(bucket_id=bucket_id, content="这条年轮写错了。")
+    comment_id = commented["comment"]["id"]
+    await wait_for_embedding_call(embedding_engine, bucket_id)
+    embedding_engine.calls.clear()
+    before = await bucket_mgr.get(bucket_id)
+    before_meta = before["metadata"]
+
+    deleted = await server.delete_bucket_comment(bucket_id=bucket_id, comment_id=comment_id)
+    after = await bucket_mgr.get(bucket_id)
+    embedding_call = await wait_for_embedding_call(embedding_engine, bucket_id)
+
+    assert deleted["status"] == "deleted"
+    assert deleted["comment_id"] == comment_id
+    assert after["metadata"]["comments"] == []
+    assert after["metadata"]["comment_count"] == 0
+    assert after["metadata"]["activation_count"] == before_meta["activation_count"]
+    assert after["metadata"]["last_active"] == before_meta["last_active"]
+    assert embedding_call[0] == bucket_id
+
+
+@pytest.mark.asyncio
+async def test_delete_bucket_comment_rejects_user_and_legacy_haven_rings(monkeypatch, bucket_mgr, decay_eng):
+    import server
+
+    bucket_id = await bucket_mgr.create(content="源记忆正文。", name="删年轮边界", domain=["恋爱"])
+    rain = await bucket_mgr.add_comment(
+        bucket_id,
+        "小雨从前端写的年轮。",
+        author=server._dashboard_author_name(),
+        source="dashboard",
+        touch=False,
+    )
+    legacy_haven = await bucket_mgr.add_comment(
+        bucket_id,
+        "旧兼容路径写的 Haven 年轮。",
+        author=server._ai_author_name(),
+        source="hold(feel=True)",
+        touch=False,
+    )
+    monkeypatch.setattr(server, "bucket_mgr", bucket_mgr)
+    monkeypatch.setattr(server, "decay_engine", decay_eng)
+    embedding_engine = CapturingEmbeddingEngine()
+    monkeypatch.setattr(server, "embedding_engine", embedding_engine)
+
+    rain_result = await server.delete_bucket_comment(bucket_id=bucket_id, comment_id=rain["id"])
+    legacy_result = await server.delete_bucket_comment(bucket_id=bucket_id, comment_id=legacy_haven["id"])
+    bucket = await bucket_mgr.get(bucket_id)
+    remaining_ids = [comment["id"] for comment in bucket["metadata"]["comments"]]
+
+    assert rain_result["error"] == "forbidden"
+    assert legacy_result["error"] == "forbidden"
+    assert remaining_ids == [rain["id"], legacy_haven["id"]]
+    assert embedding_engine.calls == []
 
 
 @pytest.mark.asyncio

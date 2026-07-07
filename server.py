@@ -18,6 +18,8 @@
 #                   只读浮现久未触碰的旧记忆
 #       comment_bucket — Add a ring comment to a memory
 #                        给记忆追加年轮
+#       delete_bucket_comment — Delete one Haven-authored ring comment
+#                               删除一条 Haven 自己写的年轮
 #       hold   — Store a single memory
 #                存储单条记忆
 #       grow   — Long-note memory digest, auto-split selected content into buckets
@@ -7865,6 +7867,52 @@ async def comment_bucket(
         "status": "commented",
         "id": bucket_id,
         "comment": entry,
+        "embedding_refreshed": False,
+        "embedding_queued": embedding_queued,
+        "metadata": _bucket_read_payload(bucket)["metadata"] if bucket else {},
+    }
+
+
+# =============================================================
+# Tool 1.7: delete_bucket_comment — delete one AI-authored ring
+# 工具 1.7：delete_bucket_comment — 删除一条自己写的年轮
+# =============================================================
+@mcp.tool()
+async def delete_bucket_comment(bucket_id: str, comment_id: str) -> dict:
+    """删除自己通过 comment_bucket 写入的一条年轮；不会删除 bucket，也不会删除小雨/dashboard 写的年轮。"""
+    bucket_id = _coerce_memory_id(bucket_id)
+    comment_id = _coerce_memory_id(comment_id)
+    if not bucket_id or not MEMORY_ID_RE.fullmatch(bucket_id):
+        return {"error": "invalid bucket_id"}
+    if not comment_id or not MEMORY_ID_RE.fullmatch(comment_id):
+        return {"error": "invalid comment_id"}
+    if not await bucket_mgr.get(bucket_id):
+        return {"error": "not found", "id": bucket_id}
+
+    result = await bucket_mgr.delete_comment(
+        bucket_id,
+        comment_id,
+        allowed_author=_ai_author_name(),
+        allowed_source="comment_bucket",
+    )
+    if result.get("status") == "not_found":
+        return {"error": "comment not found", "id": bucket_id, "comment_id": comment_id}
+    if result.get("status") == "forbidden":
+        return {
+            "error": "forbidden",
+            "reason": "only AI-authored comment_bucket year rings can be deleted",
+            "id": bucket_id,
+            "comment_id": comment_id,
+        }
+    if result.get("status") != "deleted":
+        return {"error": "delete failed", "id": bucket_id, "comment_id": comment_id}
+
+    embedding_queued = _queue_embedding_refresh(bucket_id)
+    bucket = await bucket_mgr.get(bucket_id)
+    return {
+        "status": "deleted",
+        "id": bucket_id,
+        "comment_id": comment_id,
         "embedding_refreshed": False,
         "embedding_queued": embedding_queued,
         "metadata": _bucket_read_payload(bucket)["metadata"] if bucket else {},

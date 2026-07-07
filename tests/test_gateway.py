@@ -646,7 +646,7 @@ def test_gateway_reading_note_direct_evidence_uses_same_prompt_line(
     assert "mention_policy=" not in block
     assert "recall_policy.py 实体前置修复" in block
     assert moment["_reading_note"]["use"] == "standard"
-    assert moment["_reading_note"]["canonical_domain"] == "project"
+    assert moment["_reading_note"]["canonical_domain"] == "tech"
 
 
 def test_gateway_recalled_memory_render_excludes_followup_sections(
@@ -6088,6 +6088,7 @@ def test_gateway_domain_sentinel_parser_rejects_noncanonical_domains(
     assert service._domain_sentinel_rule_plan("火焰那个意象还记得吗")["domains"] == ["relationship"]
     assert service._domain_sentinel_rule_plan("想聊亲密和身体边界")["domains"] == ["intimacy", "relationship"]
     assert service._domain_sentinel_rule_plan("生活里最近有什么变化")["domains"] == ["life"]
+    assert service._domain_sentinel_rule_plan("Gateway 召回怎么改")["domains"] == ["tech"]
     assert service._domain_sentinel_rule_plan("我们的项目最近怎么样")["domains"] == ["project"]
     assert service._domain_sentinel_rule_plan("今天的日印象和周印象")["domains"] == ["general"]
 
@@ -13885,6 +13886,77 @@ def test_non_explicit_bucket_without_reliable_signal_is_suppressed(monkeypatch, 
 
     assert not service._admit_bucket_for_recall("今天代码改得怎么样", item)
     assert item["admission_reason"] == "auto_vague_query_without_topic"
+
+
+def test_tech_domain_bucket_requires_real_query_anchor(monkeypatch, test_config, bucket_mgr):
+    cfg = _gateway_config(
+        test_config,
+        core_memory_budget=0,
+        recent_context_budget=0,
+        related_memory_budget=0,
+        word_map_hint_enabled=False,
+    )
+    tech_id = _create_bucket(
+        bucket_mgr,
+        content="Gateway 排查记录：失败节点前面都通了，后面卡在注入阶段。",
+        name="Gateway 排查记录",
+        hours_ago=6,
+        domain=["技术"],
+    )
+    task_id = _create_bucket(
+        bucket_mgr,
+        content="排查现实待办时，小雨确认前面流程都通了，只剩一个事项。",
+        name="现实待办排查",
+        hours_ago=6,
+        domain=["事务"],
+    )
+    _, service, _, _ = _build_service(monkeypatch, cfg, bucket_mgr)
+
+    generic_tech = {
+        "bucket": _run(bucket_mgr.get(tech_id)),
+        "score": 0.9,
+        "semantic_score": 0.96,
+        "keyword_score": 0.0,
+    }
+    anchored_tech = dict(generic_tech)
+    anchored_task = {
+        "bucket": _run(bucket_mgr.get(task_id)),
+        "score": 0.9,
+        "semantic_score": 0.96,
+        "keyword_score": 0.0,
+    }
+
+    assert not service._admit_bucket_for_recall("排查问题前面都通了", generic_tech)
+    assert generic_tech["admission_reason"] == "tech_domain_without_query_anchor"
+    assert generic_tech["recall_policy_debug"]["tech_domain_guard"] is True
+    assert service._admit_bucket_for_recall("Gateway 排查问题前面都通了", anchored_tech)
+    assert service._admit_bucket_for_recall("排查问题前面都通了", anchored_task)
+
+
+def test_tech_domain_moment_requires_real_query_anchor(monkeypatch, test_config, bucket_mgr):
+    cfg = _gateway_config(
+        test_config,
+        core_memory_budget=0,
+        recent_context_budget=0,
+        related_memory_budget=0,
+        word_map_hint_enabled=False,
+    )
+    _, service, _, _ = _build_service(monkeypatch, cfg, bucket_mgr)
+    generic_moment = {
+        "bucket_id": "tech-bucket",
+        "moment_id": "tech-bucket:m1",
+        "section": "moment",
+        "text": "Haven-voice 接入时有一个失败节点前面都通了。",
+        "score": 0.9,
+        "semantic_score": 0.96,
+        "rerank_score": 0.0,
+        "metadata": {"bucket_name": "Haven-voice 排查", "bucket_domain": ["技术"]},
+    }
+    anchored_moment = dict(generic_moment)
+
+    assert not service._admit_moment_for_recall("排查问题前面都通了", generic_moment)
+    assert generic_moment["admission_reason"] == "tech_domain_without_query_anchor"
+    assert service._admit_moment_for_recall("Haven-voice voice id 怎么查", anchored_moment)
 
 
 def test_window_switch_forgetting_query_admits_topical_bucket(monkeypatch, test_config, bucket_mgr):

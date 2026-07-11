@@ -7057,6 +7057,11 @@ class GatewayService:
             f"{ai_name} favorite" if ai_name else "",
             "偏爱的记忆",
             "喜欢的记忆",
+            "令你印象深刻的记忆",
+            "让你印象深刻的记忆",
+            "印象最深的记忆",
+            "我们之间重要的记忆",
+            "我们重要的记忆",
             "喜欢哪段记忆",
             "最喜欢哪段",
             "最偏爱",
@@ -7073,7 +7078,10 @@ class GatewayService:
         if any(phrase in text for phrase in direct_phrases):
             return True
         asks_memory = any(term in text for term in ["记忆", "想起", "记得"])
-        asks_preference = any(term in text for term in ["喜欢", "偏爱", "重要", "哪段", "哪一刻", "哪个瞬间"])
+        asks_preference = any(
+            term in text
+            for term in ["喜欢", "偏爱", "重要", "印象深刻", "印象最深", "哪段", "哪一刻", "哪个瞬间"]
+        )
         relationship_terms = ["我们", "你"]
         relationship_terms.extend(str(term).lower() for term in self.identity.get("relationship_terms", []))
         relationship_scope = any(term and term in text for term in relationship_terms)

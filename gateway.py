@@ -2318,6 +2318,8 @@ class GatewayService:
                     "date_persona_trace",
                     "targeted_memory_detail",
                     "dream_context",
+                    "active_reminders",
+                    "recent_context",
                 ):
                     debug.pop(key, None)
             response["debug"] = {**debug, **minimal_debug}
@@ -2361,7 +2363,10 @@ class GatewayService:
             include_diffused=include_diffused,
         )
         dynamic_context = self._clip_text(
-            str(debug_payload.get("dynamic_context") or "").strip(),
+            self._hook_recall_full_dynamic_context(
+                debug_payload,
+                include_diffused=include_diffused,
+            ),
             max_context_chars,
         )
         additional_context = self._render_hook_recall_full_additional_context(dynamic_context)
@@ -2400,6 +2405,8 @@ class GatewayService:
                     "date_persona_trace",
                     "targeted_memory_detail",
                     "dream_context",
+                    "active_reminders",
+                    "recent_context",
                 ):
                     debug.pop(key, None)
             response["debug"] = {**debug, **minimal_debug}
@@ -18673,6 +18680,7 @@ class GatewayService:
             "diffused_memory": related_memory,
             "dream_context": dream_context,
             "active_reminders": active_reminders,
+            "recent_context": recent_context,
             "stable_context": stable_context,
             "dynamic_context": dynamic_context,
         }
@@ -19221,6 +19229,32 @@ class GatewayService:
                 "[/Ombre Gateway Full Recall]",
             ]
         )
+
+    def _hook_recall_full_dynamic_context(
+        self,
+        debug_payload: dict[str, Any],
+        *,
+        include_diffused: bool,
+    ) -> str:
+        """Return recall evidence only; Bridge owns reminders and care state."""
+        _stable_context, dynamic_context = self._build_injected_context_messages(
+            "",
+            "",
+            "",
+            just_now_context=str(debug_payload.get("just_now_context") or ""),
+            recent_context=str(debug_payload.get("recent_context") or ""),
+            recalled_memory=str(debug_payload.get("recalled_memory") or ""),
+            related_memory=(
+                str(debug_payload.get("diffused_memory") or "")
+                if include_diffused
+                else ""
+            ),
+            targeted_memory_detail=str(debug_payload.get("targeted_memory_detail") or ""),
+            dream_context=str(debug_payload.get("dream_context") or ""),
+            date_persona_trace=str(debug_payload.get("date_persona_trace") or ""),
+            date_recall=str(debug_payload.get("date_recall") or ""),
+        )
+        return dynamic_context
 
     def _inject_context_messages(
         self,

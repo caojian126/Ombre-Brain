@@ -48,12 +48,12 @@ merge_threshold: 90
 # Conversation-history import defaults to smaller chunks and no automatic merge.
 # 对话历史导入默认小窗处理，且不自动合并，避免大文件把无关记忆揉成一个桶。
 import:
-  chunk_target_tokens: 3500          # smaller than old 10k windows to reduce mixed-topic chunks
-  extract_max_input_chars: 0         # 0 = do not hard-truncate; rely on chunking
+  chunk_target_tokens: 3500
+  extract_max_input_chars: 0
   max_items_per_chunk: 5
   max_tags: 6
   max_tag_chars: 12
-  auto_merge_enabled: false          # exact/safe duplicate skip still runs
+  auto_merge_enabled: false
   merge_threshold: 90
   merge_min_content_similarity: 99
   merge_require_domain_overlap: true
@@ -61,18 +61,10 @@ import:
   merge_block_disjoint_dates: true
 
 # --- Write path / 写入路径 ---
-# Semantic related-memory lookup is useful, but should not hold MCP responses
-# forever when the embedding provider is slow.
-# 语义查旧记忆很有用，但 embedding 服务慢时不能一直卡住 MCP 响应。
 write_path:
-  semantic_search_timeout_seconds: 3  # Timeout for write-time semantic lookup / 写入时语义查找超时秒数
+  semantic_search_timeout_seconds: 3
 
 # --- Automatic write gate / 自动写入门卫 ---
-# Only applies to grow(auto=true) or sources such as Operit/workflow/worker.
-# 只作用于 grow(auto=true) 或 Operit/workflow/worker 等自动总结来源。
-# Low surprise is logged but not written; medium surprise stays pending; high
-# surprise or repeated pending candidates may pass into normal grow().
-# 低意外度只记日志；中意外度 pending；高意外度或重复出现才进入普通 grow()。
 memory_write_gate:
   enabled: true
   auto_sources: ["operit", "workflow", "worker", "auto"]
@@ -84,10 +76,7 @@ memory_write_gate:
   candidate_log: "memory_write_candidates.jsonl"
   max_recent_candidates: 120
 
-# --- Dehydration API / 脱水压缩 API 配置 ---
-# Uses a cheap LLM for intelligent compression; auto-degrades to local
-# keyword extraction if API is unavailable
-# 用廉价 LLM 做智能压缩，API 不可用时自动降级到本地关键词提取
+# --- Dehydration API ---
 dehydration:
   model: "deepseek-chat"
   base_url: "https://api.deepseek.com/v1"
@@ -95,36 +84,25 @@ dehydration:
   max_tokens: 1024
   temperature: 0.1
 
-# --- Anchor / 长期锚点 ---
-# anchor is a small curated set of long-term important memories.
-# It works beside breath surfacing and keyword search.
-# anchor 是少量长期重要记忆的标记，和 breath 浮现、关键词检索各自分工。
+# --- Anchor ---
 anchor:
   max_count: 12
   min_age_hours: 24
 
-# --- Self anchor / AI self entry ---
-# entry_bucket_id selects the total self entry used by handoff and portrait.
-# Empty = fall back to the highest-ranked self_anchor bucket.
+# --- Self anchor ---
 self_anchor:
   entry_bucket_id: ""
 
-# --- Decay parameters / 记忆衰减参数 ---
-# Simulates Ebbinghaus forgetting curve, auto-archives inactive memories
-# 模拟艾宾浩斯遗忘曲线，自动归档不活跃的记忆
+# --- Decay parameters ---
 decay:
-  lambda: 0.05                    # Decay rate / 衰减速率（越大遗忘越快）
-  threshold: 0.3                  # Archive threshold / 归档阈值
-  check_interval_hours: 24        # Check interval (hours) / 衰减检查间隔（小时）
+  lambda: 0.05
+  threshold: 0.3
+  check_interval_hours: 24
   emotion_weights:
-    base: 1.0                     # Base weight / 基础权重
-    arousal_boost: 0.8            # Arousal boost coefficient / 唤醒度加成系数
+    base: 1.0
+    arousal_boost: 0.8
 
-# --- Embedding / 向量化配置 ---
-# Uses embedding API for semantic similarity search
-# 通过 embedding API 实现语义相似度搜索
-# Uses embedding.api_key/base_url first; falls back to dehydration API when unset
-# 优先使用 embedding 独立 API；未配置时回退复用脱水 API
+# --- Embedding ---
 embedding:
   enabled: true
   model: "Qwen/Qwen3-Embedding-4B"
@@ -134,49 +112,28 @@ embedding:
   query_instruction: "Given a memory search query, retrieve relevant long-term memory passages."
   document_instruction: ""
 
-# --- Reranker / 重排序配置 ---
-# Uses the embedding base_url/api_key when these are left empty.
-# 留空时复用 embedding 的 base_url/api_key。
+# --- Reranker ---
 reranker:
   enabled: true
   model: "Qwen/Qwen3-Reranker-4B"
   base_url: ""
-  # api_key: ""                   # Use OMBRE_RERANKER_API_KEY or reuse embedding key
   candidate_limit: 30
   score_weight: 0.65
   timeout_seconds: 12
-  # Env vars / 环境变量:
-  #   OMBRE_RERANKER_API_KEY
-  #   OMBRE_RERANKER_BASE_URL
-  #   OMBRE_RERANKER_MODEL
-  #   OMBRE_RERANKER_ENABLED
 
-# --- Recall diagnostics / 召回诊断 ---
-# Admin-only append log for recall debugging. It records query, candidate ids,
-# short previews, scores, gate reasons, rerank score, and final selected ids.
-# 管理员调试用追加日志；默认关闭，避免把 query 和候选记忆写入磁盘。
+# --- Recall diagnostics ---
 recall_diagnostics:
   enabled: false
-  path: ""                         # default: state_dir/recall_diagnostics.jsonl
+  path: ""
   max_candidates: 20
   max_text_chars: 220
-  # Env vars / 环境变量:
-  #   OMBRE_RECALL_DIAGNOSTICS_ENABLED
-  #   OMBRE_RECALL_DIAGNOSTICS_PATH
-  #   OMBRE_RECALL_DIAGNOSTICS_MAX_CANDIDATES
 
-# --- Recall thresholds / 召回阈值 ---
-# Query-aware candidate admission before rerank/gate. This does not force
-# injection; it only decides which semantic candidates may enter reranking.
-# 根据 query 类型调整候选入口；不直接注入，只决定哪些语义候选可进入重排序。
+# --- Recall thresholds ---
 recall_thresholds:
   vector_min_score: 0.50
-  facet_vector_min_score: 0.45       # relationship/email/body/intimacy context / 有明确语境
-  vague_vector_min_score: 0.40       # broad queries like "recent interesting things" / 模糊查询
-  explicit_vector_min_score: 0.55    # IDs/protocols/model names / 明确实体
-  # Dynamic-alpha confidence calibration is embedding-model-specific and is
-  # intentionally separate from gateway.recall_admission_semantic_score.
-  # Qwen3-Embedding-4B starting profile, measured on this memory corpus:
+  facet_vector_min_score: 0.45
+  vague_vector_min_score: 0.40
+  explicit_vector_min_score: 0.55
   dynamic_alpha_conf_lo: 0.45
   dynamic_alpha_conf_hi: 0.65
   dynamic_alpha_margin_ref: 0.10
@@ -186,13 +143,11 @@ recall_thresholds:
   explicit_admission_rerank_score: 0.65
   vague_top_k: 50
 
-# --- Recall behavior / 召回行为 ---
+# --- Recall behavior ---
 recall:
-  query_resurface_enabled: false      # true allows query breath() to append a random dormant memory when direct/related recall is sparse
+  query_resurface_enabled: false
 
-# --- Canonical domains / 主域表 ---
-# Store the key in bucket metadata; Dashboard displays label_zh.
-# 桶里存 key，Dashboard 显示中文名。
+# --- Canonical domains ---
 domain_taxonomy:
   display_language: zh
   domains:
@@ -204,66 +159,48 @@ domain_taxonomy:
     - { key: "project", label_zh: "项目" }
     - { key: "general", label_zh: "通用" }
 
-# --- Word Map Lite / 派生词图 ---
-# Derived keyword/co-occurrence index for diagnostics and future recall hints.
-# It is rebuilt manually from buckets and does not inject anything into Gateway by itself.
-# 派生的关键词/共现索引，用于诊断和后续召回提示；手动从桶重建，本身不注入 Gateway。
+# --- Word Map Lite ---
 word_map:
   enabled: false
-  daily_rebuild_enabled: true          # When word_map.enabled=true, rebuild derived index once per day
-  daily_rebuild_hour: 4                # Local hour for nightly rebuild
-  daily_rebuild_minute: 30             # Local minute for nightly rebuild
-  daily_rebuild_include_archive: false # Keep nightly index focused on active buckets by default
+  daily_rebuild_enabled: true
+  daily_rebuild_hour: 4
+  daily_rebuild_minute: 30
+  daily_rebuild_include_archive: false
   daily_rebuild_check_interval_minutes: 15
   max_terms_per_bucket: 16
   edge_top_k: 10
   min_term_len: 2
-  stopwords: []                       # Extra generic stopwords / 额外通用停用词
-  private_terms: []                   # Deployment-private terms to exclude from generic Word Map
-  stopword_prefixes: []               # Extra prefixes such as custom_ / 额外前缀
-  overview_stopwords: []              # Extra terms hidden from Top Nodes/Edges only; cards and recall hints are unaffected
-  overview_stopword_prefixes: []      # Extra prefixes hidden from Top Nodes/Edges only
-  overview_aliases: {}                # Display-only canonical aliases, e.g. {"darkroom": "暗房"}
-  overview_priority_terms: []         # Extra terms to boost in Top Nodes, without changing recall
-  overview_hub_terms: []              # Extra broad entity hubs to keep but lightly saturate in overview ranking
-  weak_hint_terms: []                  # Deployment-specific broad categories, e.g. story/project; candidate hints only, never hard evidence
-  weak_hint_weight: 0.25               # Direct hint weight for weak terms; keyword recall is unaffected
+  stopwords: []
+  private_terms: []
+  stopword_prefixes: []
+  overview_stopwords: []
+  overview_stopword_prefixes: []
+  overview_aliases: {}
+  overview_priority_terms: []
+  overview_hub_terms: []
+  weak_hint_terms: []
+  weak_hint_weight: 0.25
 
-# --- Raw Events Archive / 原文保险箱 ---
-# Stores only original user/assistant text pushed through /api/ingest-raw.
-# Does not replace curated Ombre buckets or short-term Gateway conversation_turns.
+# --- Raw Events Archive ---
 raw_events:
-  db_path: ""                          # empty = state_dir/raw_events.sqlite
+  db_path: ""
   max_ingest_batch: 1000
 
-# --- Private identity semantics / 私有身份语义 ---
-# Optional private canonical alias overlay. Do not put personal canonical nodes
-# into this template; load them from a private YAML/JSON file or env var.
-# 可选私有 canonical/alias 覆盖层。不要把个人 canonical 写进模板；
-# 请通过私有 YAML/JSON 文件或环境变量加载。
+# --- Private identity semantics ---
 identity_semantics:
   enabled: false
-  private_config_path: ""             # or OMBRE_IDENTITY_SEMANTICS_PATH
+  private_config_path: ""
   min_confidence: 0.78
   evidence_tags: ["profile_fact", "ai_favorite", "favorite_memory"]
 
-# --- Moment annotations / 记忆片段标注 ---
-# Stores lightweight summary/facets/evidence_spans in moment metadata.
-# The current built-in annotator is a deterministic fallback; future workers can
-# overwrite annotation_facets/evidence_spans with model-produced evidence.
+# --- Moment annotations ---
 moment_annotations:
   enabled: true
   max_summary_chars: 160
   max_evidence_spans: 3
   max_evidence_chars: 120
 
-# --- Gateway / 网关注入配置 ---
-# Exposes OpenAI-compatible /v1/chat/completions and Anthropic-compatible
-# /v1/messages endpoints that inject Core Memory + Recent Context + Recalled Memory
-# before forwarding upstream.
-# 暴露 OpenAI 兼容的 /v1/chat/completions 和 Anthropic 兼容的 /v1/messages 网关，
-# 在转发上游模型前自动注入
-# 核心记忆 + 最近上下文 + 动态召回记忆
+# --- Gateway ---
 gateway:
   host: "0.0.0.0"
   port: 8010
@@ -279,6 +216,10 @@ gateway:
         - "deepseek-reasoner"
         - id: "deepseek-v4"
           upstream_model: "deepseek-chat"
+        - id: "deepseek-v4-flash"
+          upstream_model: "deepseek-v4-flash"
+        - id: "deepseek-v4-pro"
+          upstream_model: "deepseek-v4-pro"
   prompt_cache: ""
   head_recent_hours: 72
   recent_context_reentry_idle_hours: 24
@@ -294,15 +235,15 @@ gateway:
   inject_total_budget: 1800
   core_memory_budget: 0
   recent_context_budget: 300
-  just_now_context_enabled: true     # 刚刚/刚才/上一句: use short-term conversation_turns, not long-term memory
+  just_now_context_enabled: true
   just_now_context_hours: 6
   just_now_context_max_turns: 5
   just_now_context_budget: 420
   conversation_turns_max_entries: 500
-  memory_sentinel_enabled: true     # grey-zone routing: search | tone_only | skip; hard recall signals bypass it
-  domain_sentinel_enabled: true      # coarse routing: message_type, primary domain, optional should_recall=false
-  domain_sentinel_model: ""          # empty = use dehydration.model; prefer cheap/fast models
-  domain_sentinel_base_url: ""       # empty = reuse dehydration.base_url
+  memory_sentinel_enabled: true
+  domain_sentinel_enabled: true
+  domain_sentinel_model: ""
+  domain_sentinel_base_url: ""
   domain_sentinel_enable_thinking: false
   domain_sentinel_max_tokens: 260
   domain_sentinel_timeout_seconds: 4

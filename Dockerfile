@@ -3,7 +3,7 @@
 # Docker 构建文件
 #
 # Build: docker build -t ombre-brain .
-# Run:   docker run -e OMBRE_API_KEY=your-key -p 8000:8000 ombre-brain
+# Run:   docker run -e OMBRE_API_KEY=your-key -p 8000:8000 -p 8010:8010 ombre-brain
 # ============================================================
 
 FROM python:3.12-slim
@@ -17,23 +17,25 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy project files / 复制项目文件
 COPY *.py .
+COPY start.sh .
 COPY resources ./resources
 COPY scripts ./scripts
 COPY dashboard.html .
 COPY dashboard_assets ./dashboard_assets
 COPY config.example.yaml ./config.yaml
-RUN chmod +x scripts/*.sh
+RUN chmod +x scripts/*.sh start.sh
 
-# Persistent mount point: bucket data
-# 持久化挂载点：记忆数据
+# Persistent mount point: bucket data & state
+# 持久化挂载点：记忆数据和运行状态
 VOLUME ["/app/buckets"]
 
 # Default to streamable-http for container (remote access)
 # 容器场景默认用 streamable-http
 ENV OMBRE_TRANSPORT=streamable-http
 ENV OMBRE_BUCKETS_DIR=/app/buckets
+ENV OMBRE_STATE_DIR=/app/state
 
 EXPOSE 8000
+EXPOSE 8010
 
-ENTRYPOINT ["python"]
-CMD ["server.py"]
+CMD ["./start.sh"]

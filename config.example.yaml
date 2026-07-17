@@ -5,31 +5,12 @@
 # ============================================================
 
 # --- Transport / 传输方式 ---
-# stdio: local use (Claude Desktop, direct pipe)
-# streamable-http: remote use (HTTP, tunnel/CDN/proxy friendly)
-# stdio: 本地使用（Claude Desktop，直接管道通信）
-# streamable-http: 远程使用（标准 HTTP，对隧道/CDN/代理友好）
 transport: "streamable-http"
 
 # --- Log level / 日志级别 ---
 log_level: "INFO"
 
-# --- Bucket storage path / 记忆桶存储路径 ---
-# Point this to your Obsidian vault subdirectory, or any local folder
-# 指向你的 Obsidian 仓库子目录，或任意本地文件夹
-# Leave as-is to use the built-in ./buckets/ directory
-# 保持默认则使用内置的 ./buckets/ 目录
-# buckets_dir: "/path/to/your/Obsidian Vault/Ombre Brain"
-
-# --- Runtime state path / 运行状态路径 ---
-# Stores runtime SQLite state such as Persona State outside bucket sync.
-# 保存 Persona State 等运行时 SQLite 状态，建议放在 buckets 同步目录外。
-# state_dir: "/path/to/ombre-brain/state"
-
 # --- Identity / 名字口径 ---
-# These names are used in prompts and comment authors. Change this block first
-# when adapting the fork for another person/persona.
-# 这些名字会进入提示词和年轮作者。改给别人用时优先改这一块。
 identity:
   ai_name: "橘諒"
   user_name: "橘草翦"
@@ -39,14 +20,9 @@ identity:
     - "小如"
 
 # --- Merge threshold / 桶合并阈值 ---
-# When storing a new memory, if similarity with an existing bucket exceeds
-# this value (0-100), merge instead of creating a new one
-# 存新记忆时，如果与已有桶的相似度超过此值（0-100），则合并而非新建
 merge_threshold: 90
 
 # --- Import safety / 大文件导入安全 ---
-# Conversation-history import defaults to smaller chunks and no automatic merge.
-# 对话历史导入默认小窗处理，且不自动合并，避免大文件把无关记忆揉成一个桶。
 import:
   chunk_target_tokens: 3500
   extract_max_input_chars: 0
@@ -449,7 +425,7 @@ reflection:
   daily_hour: 4
   daily_min_memory_items: 5
   daily_conversation_turn_limit: 12
-  daily_chat_memory_mode: auto
+  daily_chat_memory_mode: review
   daily_chat_memory_hour: 0
   daily_chat_memory_turn_limit: 0
   daily_chat_memory_max_per_day: 10

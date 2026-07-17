@@ -216,8 +216,8 @@ gateway:
   just_now_context_max_turns: 5
   just_now_context_budget: 420
   conversation_turns_max_entries: 500
-  memory_sentinel_enabled: false
-  domain_sentinel_enabled: false
+  memory_sentinel_enabled: true
+  domain_sentinel_enabled: true
   domain_sentinel_model: ""
   domain_sentinel_base_url: ""
   domain_sentinel_enable_thinking: false

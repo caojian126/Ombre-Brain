@@ -223,7 +223,7 @@ gateway:
   conversation_turns_max_entries: 500
   memory_sentinel_enabled: true
   domain_sentinel_enabled: true
-  domain_sentinel_model: ""
+  domain_sentinel_model: "deepseek-v4-flash"
   domain_sentinel_base_url: ""
   domain_sentinel_enable_thinking: false
   domain_sentinel_max_tokens: 260
@@ -242,7 +242,7 @@ gateway:
   portrait_memory_max_sources: 8
   portrait_memory_include_anchors: false
   query_planner_enabled: true
-  query_planner_model: ""
+  query_planner_model: "deepseek-v4-flash"
   query_planner_min_chars: 16
   query_planner_max_queries: 3
   query_planner_max_tokens: 360
@@ -422,7 +422,7 @@ reflection:
   enrich_backfill_limit: 5
   edge_backfill_limit: 5
   base_url: ""
-  model: ""
+  model: "deepseek-v4-flash"
   thinking_mode: ""
   temperature: 0.1
   max_tokens: 700
@@ -443,9 +443,9 @@ reflection:
   daily_chat_memory_api_key_env: ""
   daily_chat_memory_base_url: ""
   daily_chat_memory_timeout_seconds: 180
-  daily_chat_memory_summary_model: ""
+  daily_chat_memory_summary_model: "deepseek-v4-flash"
   daily_chat_memory_summary_max_tokens: 2200
-  daily_chat_memory_candidate_model: ""
+  daily_chat_memory_candidate_model: "deepseek-v4-flash"
   daily_chat_memory_candidate_max_tokens: 3200
   daily_activity_summary_enabled: true
   daily_activity_summary_turn_limit: 0
@@ -483,7 +483,7 @@ portrait:
   check_interval_minutes: 60
   state_path: ""
   base_url: ""
-  model: ""
+  model: "deepseek-v4-flash"
   thinking_mode: ""
   temperature: 0.1
   max_tokens: 3200

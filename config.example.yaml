@@ -186,16 +186,21 @@ gateway:
       protocol: "openai"
       base_url: "https://api.deepseek.com/v1"
       api_key_env: "OMBRE_GATEWAY_DEEPSEEK_API_KEY"
-      default_model: "deepseek-chat"
+      default_model: "deepseek-v4-flash"
       models:
-        - "deepseek-chat"
-        - "deepseek-reasoner"
-        - id: "deepseek-v4"
-          upstream_model: "deepseek-chat"
         - id: "deepseek-v4-flash"
           upstream_model: "deepseek-v4-flash"
         - id: "deepseek-v4-pro"
           upstream_model: "deepseek-v4-pro"
+    - name: "openai-relay"
+      protocol: "openai"
+      base_url: "https://hk.xn--vduyey89e.com/v1"
+      api_key_env: "OMBRE_GATEWAY_OPENAI_RELAY_API_KEY"
+      default_model: "gpt-5.5"
+      models:
+        - "gpt-5.5"
+        - "gpt-5.6-sol"
+        - "gpt-5.6-terra"
   prompt_cache: ""
   head_recent_hours: 72
   recent_context_reentry_idle_hours: 24

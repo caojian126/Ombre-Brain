@@ -1,0 +1,29 @@
+name: Prepare verified rollback
+
+on:
+  push:
+    branches:
+      - rollback-to-4133fd9
+    paths:
+      - .github/workflows/prepare-rollback.yml
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: rollback-to-4133fd9
+      - name: Restore verified configuration
+        run: |
+          git checkout 4133fd99f6b0bde72ff670c1d063060c6772dde1 -- config.example.yaml
+          git rm .github/workflows/prepare-rollback.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add config.example.yaml
+          git commit -m "revert: restore last known working configuration"
+          git push origin HEAD:rollback-to-4133fd9

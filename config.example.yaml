@@ -4,16 +4,25 @@
 # 复制此文件为 config.yaml 后按需修改
 # ============================================================
 
+# --- Transport / 传输方式 ---
 transport: "streamable-http"
+
+# --- Log level / 日志级别 ---
 log_level: "INFO"
 
+# --- Identity / 名字口径 ---
 identity:
   ai_name: "橘諒"
   user_name: "橘草翦"
   user_display_name: "橘草翦"
-  user_aliases: ["草翦", "小如"]
+  user_aliases:
+    - "草翦"
+    - "小如"
 
+# --- Merge threshold / 桶合并阈值 ---
 merge_threshold: 90
+
+# --- Import safety / 大文件导入安全 ---
 import:
   chunk_target_tokens: 3500
   extract_max_input_chars: 0
@@ -26,8 +35,12 @@ import:
   merge_require_domain_overlap: true
   merge_require_source_match: true
   merge_block_disjoint_dates: true
+
+# --- Write path / 写入路径 ---
 write_path:
   semantic_search_timeout_seconds: 3
+
+# --- Automatic write gate / 自动写入门卫 ---
 memory_write_gate:
   enabled: true
   auto_sources: ["operit", "workflow", "worker", "auto"]
@@ -39,24 +52,33 @@ memory_write_gate:
   candidate_log: "memory_write_candidates.jsonl"
   max_recent_candidates: 120
 
+# --- Dehydration API ---
 dehydration:
-  model: "deepseek-v4-flash"
+  model: "deepseek-chat"
   base_url: "https://api.deepseek.com/v1"
-  thinking_mode: "disabled"
+  thinking_mode: ""
   max_tokens: 1024
   temperature: 0.1
 
+# --- Anchor ---
 anchor:
   max_count: 12
   min_age_hours: 24
+
+# --- Self anchor ---
 self_anchor:
   entry_bucket_id: ""
+
+# --- Decay parameters ---
 decay:
   lambda: 0.05
   threshold: 0.3
   check_interval_hours: 24
-  emotion_weights: { base: 1.0, arousal_boost: 0.8 }
+  emotion_weights:
+    base: 1.0
+    arousal_boost: 0.8
 
+# --- Embedding ---
 embedding:
   enabled: true
   model: "Qwen/Qwen3-Embedding-4B"
@@ -65,6 +87,8 @@ embedding:
   query_timeout_seconds: 3
   query_instruction: "Given a memory search query, retrieve relevant long-term memory passages."
   document_instruction: ""
+
+# --- Reranker ---
 reranker:
   enabled: true
   model: "Qwen/Qwen3-Reranker-4B"
@@ -72,11 +96,15 @@ reranker:
   candidate_limit: 30
   score_weight: 0.65
   timeout_seconds: 12
+
+# --- Recall diagnostics ---
 recall_diagnostics:
   enabled: false
   path: ""
   max_candidates: 20
   max_text_chars: 220
+
+# --- Recall thresholds ---
 recall_thresholds:
   vector_min_score: 0.50
   facet_vector_min_score: 0.45
@@ -90,9 +118,12 @@ recall_thresholds:
   explicit_admission_semantic_score: 0.72
   explicit_admission_rerank_score: 0.65
   vague_top_k: 50
+
+# --- Recall behavior ---
 recall:
   query_resurface_enabled: false
 
+# --- Canonical domains ---
 domain_taxonomy:
   display_language: zh
   domains:
@@ -103,6 +134,8 @@ domain_taxonomy:
     - { key: "tech", label_zh: "技术" }
     - { key: "project", label_zh: "项目" }
     - { key: "general", label_zh: "通用" }
+
+# --- Word Map Lite ---
 word_map:
   enabled: false
   daily_rebuild_enabled: true
@@ -123,20 +156,27 @@ word_map:
   overview_hub_terms: []
   weak_hint_terms: []
   weak_hint_weight: 0.25
+
+# --- Raw Events Archive ---
 raw_events:
   db_path: ""
   max_ingest_batch: 1000
+
+# --- Private identity semantics ---
 identity_semantics:
   enabled: false
   private_config_path: ""
   min_confidence: 0.78
   evidence_tags: ["profile_fact", "ai_favorite", "favorite_memory"]
+
+# --- Moment annotations ---
 moment_annotations:
   enabled: true
   max_summary_chars: 160
   max_evidence_spans: 3
   max_evidence_chars: 120
 
+# --- Gateway ---
 gateway:
   host: "0.0.0.0"
   port: 8010
@@ -146,8 +186,12 @@ gateway:
       protocol: "openai"
       base_url: "https://api.deepseek.com/v1"
       api_key_env: "OMBRE_GATEWAY_DEEPSEEK_API_KEY"
-      default_model: "deepseek-v4-flash"
+      default_model: "deepseek-chat"
       models:
+        - "deepseek-chat"
+        - "deepseek-reasoner"
+        - id: "deepseek-v4"
+          upstream_model: "deepseek-chat"
         - id: "deepseek-v4-flash"
           upstream_model: "deepseek-v4-flash"
         - id: "deepseek-v4-pro"
@@ -174,8 +218,8 @@ gateway:
   conversation_turns_max_entries: 500
   memory_sentinel_enabled: true
   domain_sentinel_enabled: true
-  domain_sentinel_model: "deepseek-v4-flash"
-  domain_sentinel_base_url: "https://api.deepseek.com/v1"
+  domain_sentinel_model: ""
+  domain_sentinel_base_url: ""
   domain_sentinel_enable_thinking: false
   domain_sentinel_max_tokens: 260
   domain_sentinel_timeout_seconds: 4
@@ -193,7 +237,7 @@ gateway:
   portrait_memory_max_sources: 8
   portrait_memory_include_anchors: false
   query_planner_enabled: true
-  query_planner_model: "deepseek-v4-flash"
+  query_planner_model: ""
   query_planner_min_chars: 16
   query_planner_max_queries: 3
   query_planner_max_tokens: 360
@@ -220,9 +264,52 @@ gateway:
   word_map_hint_neighbor_limit: 6
   word_map_hint_bucket_limit: 12
   axis_lite:
-    technical_axis_terms: [esp32, mpr121, sqlite, 模块, 硬件, 接口, 端点, api, gateway, bridge, mcp, embedding, rerank, 代码, 开源项目]
-    technical_database_terms: [schema, 端点, 接口, 代码, 实现, 导入, 索引, 查询, 字段, 表结构, 迁移, sqlite, sql]
-    technical_domain_terms: [tech, technical, projectcode, hardwareprotocol, hardware, code, debug, 技术, 技术计划, 工程, 代码, 硬件, 协议, 数据库, 开发]
+    technical_axis_terms:
+      - esp32
+      - mpr121
+      - sqlite
+      - 模块
+      - 硬件
+      - 接口
+      - 端点
+      - api
+      - gateway
+      - bridge
+      - mcp
+      - embedding
+      - rerank
+      - 代码
+      - 开源项目
+    technical_database_terms:
+      - schema
+      - 端点
+      - 接口
+      - 代码
+      - 实现
+      - 导入
+      - 索引
+      - 查询
+      - 字段
+      - 表结构
+      - 迁移
+      - sqlite
+      - sql
+    technical_domain_terms:
+      - tech
+      - technical
+      - projectcode
+      - hardwareprotocol
+      - hardware
+      - code
+      - debug
+      - 技术
+      - 技术计划
+      - 工程
+      - 代码
+      - 硬件
+      - 协议
+      - 数据库
+      - 开发
   semantic_candidate_top_k: 50
   moment_search_limit: 50
   recall_fusion_mode: dynamic
@@ -241,6 +328,7 @@ gateway:
   edge_min_confidence: 0.55
   upstream_key_cooldown_seconds: 300
 
+# --- Memory Diffusion ---
 memory_diffusion:
   enabled: true
   max_hops: 2
@@ -250,11 +338,15 @@ memory_diffusion:
   decay: 0.55
   include_incoming: true
   max_paths_per_hit: 3
+
+# --- Node Facets ---
 node_facets:
   enabled: true
   store: "sqlite"
   salience_min: 0.2
   salience_max: 1.3
+
+# --- Memory Relevance ---
 memory_relevance:
   aliases:
     relationship_identity: ["human-ai relationship", "ai relationship", "人机恋", "人机关系"]
@@ -266,13 +358,14 @@ memory_relevance:
   blocked_facets: []
   section_hints: {}
 
+# --- Persona State Engine ---
 persona:
   enabled: true
   profile_id: "main_profile"
   mode: "llm"
   base_url: "https://api.deepseek.com/v1"
-  model: "deepseek-v4-flash"
-  thinking_mode: "disabled"
+  model: "deepseek-chat"
+  thinking_mode: ""
   temperature: 0.1
   max_tokens: 500
   global_decay_hours: 168
@@ -288,8 +381,17 @@ persona:
   event_force_after_minutes: 30
   event_excerpt_chars: 220
   evaluation_context_turns: 3
-  initial_personality: { openness: 0.56, conscientiousness: 0.50, extraversion: 0.44, agreeableness: 0.66, neuroticism: 0.36 }
-  initial_relationship: { affinity: 0.86, dominance: 0.38, defensiveness: 0.12, trust: 0.82 }
+  initial_personality:
+    openness: 0.56
+    conscientiousness: 0.50
+    extraversion: 0.44
+    agreeableness: 0.66
+    neuroticism: 0.36
+  initial_relationship:
+    affinity: 0.86
+    dominance: 0.38
+    defensiveness: 0.12
+    trust: 0.82
   initial_affect:
     valence: 0.56
     arousal: 0.34
@@ -303,6 +405,7 @@ persona:
     residue: ""
     inner_thought: ""
 
+# --- Reflection worker ---
 reflection:
   enabled: true
   auto_enabled: true
@@ -313,9 +416,9 @@ reflection:
   enrich_backfill_enabled: true
   enrich_backfill_limit: 5
   edge_backfill_limit: 5
-  base_url: "https://api.deepseek.com/v1"
-  model: "deepseek-v4-flash"
-  thinking_mode: "disabled"
+  base_url: ""
+  model: ""
+  thinking_mode: ""
   temperature: 0.1
   max_tokens: 700
   timezone: "Asia/Shanghai"
@@ -335,9 +438,9 @@ reflection:
   daily_chat_memory_api_key_env: ""
   daily_chat_memory_base_url: ""
   daily_chat_memory_timeout_seconds: 180
-  daily_chat_memory_summary_model: "deepseek-v4-flash"
+  daily_chat_memory_summary_model: ""
   daily_chat_memory_summary_max_tokens: 2200
-  daily_chat_memory_candidate_model: "deepseek-v4-flash"
+  daily_chat_memory_candidate_model: ""
   daily_chat_memory_candidate_max_tokens: 3200
   daily_activity_summary_enabled: true
   daily_activity_summary_turn_limit: 0
@@ -352,13 +455,19 @@ reflection:
   candidate_recent_limit: 8
   candidate_semantic_limit: 6
   edge_min_confidence: 0.55
-  identity_role_edges: { enabled: false, detail: {}, context: {}, relationship: {}, shared: {} }
+  identity_role_edges:
+    enabled: false
+    detail: {}
+    context: {}
+    relationship: {}
+    shared: {}
   diary_mcp_url: ""
   diary_mcp_token_env: ""
   diary_memory_extract_enabled: true
   diary_memory_extract_max_per_day: 1
   diary_memory_extract_min_confidence: 0.68
 
+# --- Daily Portrait Maintainer ---
 portrait:
   enabled: true
   auto_enabled: true
@@ -368,9 +477,9 @@ portrait:
   daily_hour: 4
   check_interval_minutes: 60
   state_path: ""
-  base_url: "https://api.deepseek.com/v1"
-  model: "deepseek-v4-flash"
-  thinking_mode: "disabled"
+  base_url: ""
+  model: ""
+  thinking_mode: ""
   temperature: 0.1
   max_tokens: 3200
   json_response_format: true
@@ -383,6 +492,7 @@ portrait:
   staging_pool_max: 24
   candidate_max: 40
 
+# --- Night dream worker ---
 dream:
   enabled: true
   auto_enabled: true
@@ -416,8 +526,19 @@ dream:
   max_surface_attempts: 4
   claim_ttl_minutes: 15
 
-scoring_weights: { topic_relevance: 4.0, emotion_resonance: 2.0, time_proximity: 1.5, importance: 1.0 }
-matching: { fuzzy_threshold: 50, max_results: 5 }
+# --- Scoring weights ---
+scoring_weights:
+  topic_relevance: 4.0
+  emotion_resonance: 2.0
+  time_proximity: 1.5
+  importance: 1.0
+
+# --- Fuzzy matching ---
+matching:
+  fuzzy_threshold: 50
+  max_results: 5
+
+# --- Obsidian wikilinks ---
 wikilink:
   enabled: true
   use_tags: false

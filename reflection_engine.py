@@ -3152,25 +3152,33 @@ class ReflectionEngine:
             content = self._trim_daily_chat_memory_content(str(candidate.get("content") or "").strip())
             if not content:
                 continue
-            if self._daily_chat_memory_noise(content):
-                continue
             kind = self._normalize_auto_memory_kind(
                 candidate.get("kind"),
                 content=content,
                 tags=candidate_tags,
             )
-            if not kind or kind == "love_letter":
+            if kind == "love_letter":
                 continue
-            # review 模式由人工审批把关，跳过低价值亲昵/片段过滤；auto 模式保持严格过滤
-            if not is_review and self._daily_chat_memory_low_value_social_noise(content, kind):
-                continue
+            if not is_review:
+                # auto 模式：保持严格过滤
+                if self._daily_chat_memory_noise(content):
+                    continue
+                if not kind:
+                    continue
+                if self._daily_chat_memory_low_value_social_noise(content, kind):
+                    continue
+                title = str(candidate.get("title") or "").strip()
+                if self._daily_chat_memory_low_value_episode(content, kind, title):
+                    continue
+                confidence = self._clamp(candidate.get("confidence", 0.0))
+                threshold = self.daily_chat_memory_min_confidence if min_confidence is None else min_confidence
+                if confidence < threshold:
+                    continue
+            else:
+                # review 模式：跳过全部质量过滤，由人工审批把关；类型缺失时给默认
+                if not kind:
+                    kind = "key_event"
             title = str(candidate.get("title") or "").strip()
-            if not is_review and self._daily_chat_memory_low_value_episode(content, kind, title):
-                continue
-            confidence = self._clamp(candidate.get("confidence", 0.0))
-            threshold = self.daily_chat_memory_min_confidence if min_confidence is None else min_confidence
-            if confidence < threshold:
-                continue
             if self._daily_chat_memory_title_is_generic(title):
                 title = self._daily_chat_memory_title(content, kind, key)
             domain = self._auto_memory_domain(kind, content, candidate_tags, candidate.get("domain"))
@@ -3196,12 +3204,12 @@ class ReflectionEngine:
                 "importance": max(5, min(6, self._int_between(candidate.get("importance"), 5))),
                 "valence": self._clamp(candidate.get("valence", 0.55)),
                 "arousal": self._clamp(candidate.get("arousal", 0.3)),
-                "confidence": confidence,
+                "confidence": confidence if not is_review else self._clamp(candidate.get("confidence", 0.7)),
                 "source_turn_ids": source_turn_ids,
                 "source_event_ids": source_event_ids,
                 "reason": str(candidate.get("reason") or "").strip()[:160],
             })
-            if self._daily_chat_memory_duplicate_candidate(item, normalized):
+            if not is_review and self._daily_chat_memory_duplicate_candidate(item, normalized):
                 continue
             normalized.append(item)
             if len(normalized) >= int(max_candidates or self.daily_chat_memory_max_per_day or 1):
@@ -3410,25 +3418,10 @@ class ReflectionEngine:
         for index in pending_indexes:
             item = refreshed[index]
             candidate = item.get("candidate") or {}
-            candidate_tags = self._string_list(candidate.get("tags"), limit=8)
-            content = str(candidate.get("content") or "")
-            kind = self._normalize_auto_memory_kind(
-                candidate.get("kind"),
-                content=content,
-                tags=candidate_tags,
-            )
-            should_reject = False
-            reject_reason = ""
-            if self._daily_chat_memory_noise(content):
-                should_reject = True
-                reject_reason = "auto_cleaned_noise"
-            elif self._daily_chat_memory_duplicate_candidate(candidate, kept_candidates):
-                should_reject = True
-                reject_reason = "auto_cleaned_duplicate"
-            if should_reject:
+            if not str(candidate.get("content") or "").strip():
                 item["status"] = "rejected"
                 item["rejected_at"] = item.get("rejected_at") or datetime.now(timezone.utc).isoformat(timespec="seconds")
-                item["reject_reason"] = reject_reason
+                item["reject_reason"] = "auto_cleaned_empty"
                 changed = True
                 continue
             kept_candidates.append(candidate)

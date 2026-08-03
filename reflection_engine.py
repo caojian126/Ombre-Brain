@@ -386,7 +386,7 @@ class ReflectionEngine:
         )
         self.daily_chat_memory_min_confidence = float(cfg.get("daily_chat_memory_min_confidence", 0.68))
         self.daily_chat_memory_review_min_confidence = float(
-            cfg.get("daily_chat_memory_review_min_confidence", 0.55)
+            cfg.get("daily_chat_memory_review_min_confidence", 0.35)
         )
         self.daily_chat_memory_summary_enabled = bool(cfg.get("daily_chat_memory_summary_enabled", True))
         self.daily_chat_memory_summary_window_turns = max(
@@ -2410,6 +2410,7 @@ class ReflectionEngine:
             turns,
             max_candidates=max_candidates,
             min_confidence=min_confidence,
+            mode=effective_mode,
         )
         if not candidates:
             logger.info(
@@ -3133,6 +3134,7 @@ class ReflectionEngine:
         *,
         max_candidates: int | None = None,
         min_confidence: float | None = None,
+        mode: str = "",
     ) -> list[dict]:
         fallback_turn_ids = [turn.get("id") for turn in turns if turn.get("id") is not None]
         fallback_raw_event_ids = [
@@ -3141,6 +3143,7 @@ class ReflectionEngine:
             for event_id in (turn.get("raw_event_ids") or [])
             if event_id is not None
         ]
+        is_review = self._normalize_daily_chat_memory_mode(mode or self.daily_chat_memory_mode) == "review"
         normalized = []
         for candidate in candidates or []:
             if candidate.get("should_write") is False:
@@ -3158,10 +3161,11 @@ class ReflectionEngine:
             )
             if not kind or kind == "love_letter":
                 continue
-            if self._daily_chat_memory_low_value_social_noise(content, kind):
+            # review 模式由人工审批把关，跳过低价值亲昵/片段过滤；auto 模式保持严格过滤
+            if not is_review and self._daily_chat_memory_low_value_social_noise(content, kind):
                 continue
             title = str(candidate.get("title") or "").strip()
-            if self._daily_chat_memory_low_value_episode(content, kind, title):
+            if not is_review and self._daily_chat_memory_low_value_episode(content, kind, title):
                 continue
             confidence = self._clamp(candidate.get("confidence", 0.0))
             threshold = self.daily_chat_memory_min_confidence if min_confidence is None else min_confidence
@@ -3418,16 +3422,6 @@ class ReflectionEngine:
             if self._daily_chat_memory_noise(content):
                 should_reject = True
                 reject_reason = "auto_cleaned_noise"
-            elif kind and self._daily_chat_memory_low_value_social_noise(content, kind):
-                should_reject = True
-                reject_reason = "auto_cleaned_low_value_social"
-            elif kind and self._daily_chat_memory_low_value_episode(
-                content,
-                kind,
-                str(candidate.get("title") or ""),
-            ):
-                should_reject = True
-                reject_reason = "auto_cleaned_low_value_episode"
             elif self._daily_chat_memory_duplicate_candidate(candidate, kept_candidates):
                 should_reject = True
                 reject_reason = "auto_cleaned_duplicate"

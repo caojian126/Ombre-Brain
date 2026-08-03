@@ -4266,10 +4266,11 @@ class ReflectionEngine:
         max_tokens: int,
         temperature: float,
     ) -> dict[str, Any]:
+        # DeepSeek V4 原生思考开关参数是 thinking.type；enable_thinking 只是兼容参数，可能不生效
         return {
             "max_tokens": max_tokens,
             "temperature": temperature,
-            "extra_body": {"enable_thinking": False},
+            "extra_body": {"thinking": {"type": "disabled"}},
         }
 
     @staticmethod

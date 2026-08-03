@@ -1366,7 +1366,7 @@ class ReflectionEngine:
             **self._completion_options(
                 max_tokens=self.max_tokens,
                 temperature=self.temperature,
-                thinking_mode="" if use_dehydration else None,
+                thinking_mode=None,
             ),
         )
         raw = response.choices[0].message.content if response.choices else ""
@@ -4289,17 +4289,12 @@ class ReflectionEngine:
         temperature: float,
         use_daily_client: bool,
     ) -> Any:
-        if use_daily_client:
-            completion_options = self._daily_chat_memory_completion_options(
-                max_tokens=max_tokens,
-                temperature=temperature,
-            )
-        else:
-            completion_options = self._completion_options(
-                max_tokens=max_tokens,
-                temperature=temperature,
-                thinking_mode="",
-            )
+        # daily chat memory / daily activity summary 需要纯 JSON 输出，
+        # 无论走哪个客户端都统一禁用思考模式，避免 DeepSeek 思考内容污染输出。
+        completion_options = self._daily_chat_memory_completion_options(
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
         return await client.chat.completions.create(
             model=model,
             messages=messages,

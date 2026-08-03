@@ -965,6 +965,12 @@ class ReflectionEngine:
         if self.daily_chat_memory_mode != "off" and now_local.hour >= self.daily_chat_memory_hour:
             chat_date = (now_local - timedelta(days=1)).date()
             chat_target = datetime.combine(chat_date, time.max, tzinfo=self.tz)
+            logger.info(
+                "Daily chat memory due: mode=%s stores(conv=%s raw=%s)",
+                self.daily_chat_memory_mode,
+                bool(conversation_turn_store),
+                bool(raw_event_store),
+            )
             chat_result = await self.run_daily_chat_memory(
                 bucket_mgr,
                 conversation_turn_store=conversation_turn_store,
@@ -972,6 +978,13 @@ class ReflectionEngine:
                 persona_engine=persona_engine,
                 embedding_engine=embedding_engine,
                 now=chat_target,
+            )
+            logger.info(
+                "Daily chat memory result: status=%s reason=%s date=%s turns=%s",
+                chat_result.get("status"),
+                chat_result.get("reason"),
+                chat_result.get("date"),
+                chat_result.get("turns"),
             )
             if chat_result.get("status") not in {"disabled", "skipped"}:
                 results.append(chat_result)
@@ -1679,6 +1692,7 @@ class ReflectionEngine:
             return []
         client, model, use_daily_client = self._daily_chat_memory_model_client(candidate=False)
         if not client:
+            logger.info("Daily chat memory summary skipped: model unavailable")
             return []
         windows = self._daily_chat_memory_windows(turns)
         if not windows:
@@ -2289,6 +2303,10 @@ class ReflectionEngine:
         if effective_mode == "off" or self.daily_chat_memory_max_per_day <= 0:
             return {"status": "disabled", "reason": "daily_chat_memory_off", "mode": effective_mode}
         if not conversation_turn_store:
+            logger.info(
+                "Daily chat memory skipped: no conversation_turn_store (raw_event_store=%s)",
+                bool(raw_event_store),
+            )
             return {"status": "skipped", "reason": "no_conversation_turn_store", "mode": effective_mode}
 
         now_local = self._daily_chat_memory_target(key, now)
@@ -2310,6 +2328,13 @@ class ReflectionEngine:
             except Exception as exc:
                 logger.warning("Daily chat memory raw event read failed: %s", exc)
                 raw_events = []
+            logger.info(
+                "Daily chat memory raw_events read: date=%s count=%d cursor=%d limit=%s",
+                key,
+                len(raw_events),
+                raw_event_cursor_id,
+                self.daily_chat_memory_turn_limit,
+            )
             if raw_events:
                 raw_events = [
                     event
@@ -2387,6 +2412,13 @@ class ReflectionEngine:
             min_confidence=min_confidence,
         )
         if not candidates:
+            logger.info(
+                "Daily chat memory no candidates: date=%s turns=%d summaries=%d raw_candidates=%d",
+                key,
+                len(turns),
+                len(window_summaries),
+                len(raw_candidates),
+            )
             return {
                 "status": "skipped",
                 "reason": "no_candidates",

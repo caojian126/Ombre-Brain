@@ -240,8 +240,7 @@ DAILY_CHAT_MEMORY_SUMMARY_PROMPT_TEMPLATE = """你是 {ai_name} 的对话压缩�
 - summary 通常 80 到 320 字；写清背景、因果、已确认内容、未完成点。不要输出 Markdown。
 - 如果信号出现在窗口开头或结尾，保留“前文可能已铺垫 / 后文可能继续确认”的边界提醒，不要把未确认因果说死。
 - source_event_ids / source_turn_ids 只能使用输入里真实出现的 id；拿不准可留空。
-- confidence 低于 0.5 的内容不要输出。
-"""
+- confidence 低于 0.5 的内容不要输出。"""
 
 
 DAILY_ACTIVITY_SUMMARY_PROMPT_TEMPLATE = """你是 {ai_name} 的当天行动摘要器。你正在为 handoff、新窗口和 dashboard 的 Recent Timeline 写一条“今天做了什么”。
@@ -386,7 +385,7 @@ class ReflectionEngine:
         )
         self.daily_chat_memory_min_confidence = float(cfg.get("daily_chat_memory_min_confidence", 0.68))
         self.daily_chat_memory_review_min_confidence = float(
-            cfg.get("daily_chat_memory_review_min_confidence", 0.35)
+            cfg.get("daily_chat_memory_review_min_confidence", 0.37)
         )
         self.daily_chat_memory_summary_enabled = bool(cfg.get("daily_chat_memory_summary_enabled", True))
         self.daily_chat_memory_summary_window_turns = max(
@@ -3159,26 +3158,29 @@ class ReflectionEngine:
             )
             if kind == "love_letter":
                 continue
-            if not is_review:
-                # auto 模式：保持严格过滤
-                if self._daily_chat_memory_noise(content):
+            # 质量过滤：auto / review 统一执行（对齐原作者）；
+            # review 仅把置信度门槛放宽到原作者 0.55 的 2/3（0.37），其余不动
+            if self._daily_chat_memory_noise(content):
+                continue
+            if not kind:
+                if not is_review:
                     continue
-                if not kind:
-                    continue
-                if self._daily_chat_memory_low_value_social_noise(content, kind):
-                    continue
-                title = str(candidate.get("title") or "").strip()
-                if self._daily_chat_memory_low_value_episode(content, kind, title):
-                    continue
-                confidence = self._clamp(candidate.get("confidence", 0.0))
-                threshold = self.daily_chat_memory_min_confidence if min_confidence is None else min_confidence
-                if confidence < threshold:
-                    continue
-            else:
-                # review 模式：跳过全部质量过滤，由人工审批把关；类型缺失时给默认
-                if not kind:
-                    kind = "key_event"
+                kind = "key_event"
+            if self._daily_chat_memory_low_value_social_noise(content, kind):
+                continue
             title = str(candidate.get("title") or "").strip()
+            if self._daily_chat_memory_low_value_episode(content, kind, title):
+                continue
+            raw_confidence = candidate.get("confidence")
+            if raw_confidence is None:
+                # 原作者 prompt 不要求输出 confidence；
+                # review 给中性默认 0.5，auto 保持 0.0（严格）
+                confidence = 0.5 if is_review else 0.0
+            else:
+                confidence = self._clamp(raw_confidence)
+            threshold = self.daily_chat_memory_min_confidence if min_confidence is None else min_confidence
+            if confidence < threshold:
+                continue
             if self._daily_chat_memory_title_is_generic(title):
                 title = self._daily_chat_memory_title(content, kind, key)
             domain = self._auto_memory_domain(kind, content, candidate_tags, candidate.get("domain"))
@@ -3204,12 +3206,12 @@ class ReflectionEngine:
                 "importance": max(5, min(6, self._int_between(candidate.get("importance"), 5))),
                 "valence": self._clamp(candidate.get("valence", 0.55)),
                 "arousal": self._clamp(candidate.get("arousal", 0.3)),
-                "confidence": confidence if not is_review else self._clamp(candidate.get("confidence", 0.7)),
+                "confidence": confidence,
                 "source_turn_ids": source_turn_ids,
                 "source_event_ids": source_event_ids,
                 "reason": str(candidate.get("reason") or "").strip()[:160],
             })
-            if not is_review and self._daily_chat_memory_duplicate_candidate(item, normalized):
+            if self._daily_chat_memory_duplicate_candidate(item, normalized):
                 continue
             normalized.append(item)
             if len(normalized) >= int(max_candidates or self.daily_chat_memory_max_per_day or 1):

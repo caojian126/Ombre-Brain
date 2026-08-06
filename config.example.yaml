@@ -666,7 +666,7 @@ reflection:
   daily_chat_memory_max_per_day: 10 # cap for selected long-term memory candidates
   daily_chat_memory_min_confidence: 0.68 # auto-write threshold
   daily_chat_memory_review_max_per_day: 10 # review mode can surface more candidates without auto-writing them
-  daily_chat_memory_review_min_confidence: 0.35 # lower review threshold; auto still uses daily_chat_memory_min_confidence
+  daily_chat_memory_review_min_confidence: 0.37 # 原作者 0.55 的 2/3；auto 仍用 daily_chat_memory_min_confidence
   daily_chat_memory_summary_enabled: true       # first compress chat windows, then extract memory candidates
   daily_chat_memory_summary_window_turns: 14    # overlapping context window so boundaries do not split causality
   daily_chat_memory_summary_stride_turns: 7     # start a new summary window every N turns

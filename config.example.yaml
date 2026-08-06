@@ -297,6 +297,7 @@ gateway:
   host: "0.0.0.0"
   port: 8010
   default_session_id: "main"      # used only by compatible routes when the header is omitted
+  # 单上游字段：仅在未配置 upstreams 时使用；启用 upstreams 后会被忽略
   upstream_base_url: "https://api.openai.com/v1"
   upstream_default_model: "gpt-4.1-mini"
   upstream_models:
@@ -318,21 +319,28 @@ gateway:
   # name to upstream.
   # 配置 upstreams 后，网关会聚合所有模型，并按模型名路由到对应上游。
   # models 可用字典写别名：id 是客户端看到的名字，upstream_model 是发给上游的真实名字。
-  # upstreams:
-  #   - name: "deepseek"
-  #     protocol: "openai"  # default; forwards to /chat/completions
-  #     base_url: "https://api.deepseek.com"
-  #     api_key_env: "OMBRE_GATEWAY_DEEPSEEK_API_KEY"
-  #     # Optional fallback keys. Retryable errors switch to the next key.
-  #     # 可选备用 key。遇到可重试错误时自动换下一个 key。
-  #     # api_key_envs:
-  #     #   - "OMBRE_GATEWAY_DEEPSEEK_API_KEY_1"
-  #     #   - "OMBRE_GATEWAY_DEEPSEEK_API_KEY_2"
-  #     default_model: "deepseek-v4-flash"
-  #     prompt_cache: ""  # DeepSeek uses automatic prefix cache / DeepSeek 使用自动前缀缓存
-  #     models:
-  #       - "deepseek-v4-flash"
-  #       - "deepseek-v4-pro"
+  # 启用 upstreams 后，上面的 upstream_base_url / upstream_default_model / upstream_models 会被忽略。
+  upstreams:
+    - name: "deepseek"            # 直连 DeepSeek（原有模型保留）
+      protocol: "openai"
+      base_url: "https://api.deepseek.com"
+      api_key_env: "OMBRE_GATEWAY_DEEPSEEK_API_KEY"
+      default_model: "deepseek-v4-flash"
+      prompt_cache: ""            # DeepSeek uses automatic prefix cache / DeepSeek 使用自动前缀缓存
+      models:
+        - "deepseek-v4-flash"
+        - "deepseek-v4-pro"
+    - name: "opencode-go"         # OpenCode Go 中转
+      protocol: "openai"
+      base_url: "https://opencode.ai/zen/go/v1"
+      api_key_env: "OMBRE_GATEWAY_OPENCODE_API_KEY"
+      models:
+        - id: "ds-zen-flash"      # 客户端别名 → 中转实际模型
+          upstream_model: "deepseek-v4-flash"
+        - id: "ds-zen-pro"
+          upstream_model: "deepseek-v4-pro"
+        - "kimi-k2.6"
+  # 参考：其他上游示例（未启用）
   #   - name: "siliconflow"
   #     protocol: "openai"
   #     base_url: "https://api.siliconflow.cn/v1"
@@ -346,8 +354,6 @@ gateway:
   #     api_key_env: "OMBRE_GATEWAY_ANTHROPIC_API_KEY"
   #     anthropic_version: "2023-06-01"
   #     prompt_cache: "anthropic_explicit"  # recommended for official Claude / most Anthropic-compatible proxies
-  #     # prompt_cache: "anthropic"  # compatibility mode for proxies that require top-level cache_control
-  #     # prompt_cache_retention: "1h"  # optional; default cache TTL is 5 minutes
   #     default_model: "claude-sonnet"
   #     models:
   #       - id: "claude-sonnet"

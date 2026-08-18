@@ -31,9 +31,9 @@ log_level: "INFO"
 # when adapting the fork for another person/persona.
 # 这些名字会进入提示词和年轮作者。改给别人用时优先改这一块。
 identity:
-  ai_name: "AI"                 # MCP-authored year rings and assistant wording
-  user_name: "User"             # Dashboard-authored year rings
-  user_display_name: "用户"      # How prompts refer to the human partner
+  ai_name: "橘諒"                 # MCP-authored year rings and assistant wording
+  user_name: "小如"             # Dashboard-authored year rings
+  user_display_name: "小如"      # How prompts refer to the human partner
   user_aliases:
     - "对方"
 
@@ -89,7 +89,7 @@ dehydration:
   # Supports any OpenAI-compatible API: DeepSeek / Ollama / LM Studio / vLLM / Gemini etc.
   # 支持所有 OpenAI 兼容 API：DeepSeek / Ollama / LM Studio / vLLM / Gemini 等
   model: "deepseek-v4-flash"
-  base_url: "https://api.deepseek.com"
+  base_url: "https://opencode.ai/zen/go/v1"
   # Optional thinking mode override for DeepSeek v4 models:
   #   disabled = non-thinking / enabled = thinking / empty = provider default
   # DeepSeek v4 可选思考模式覆盖：
@@ -297,11 +297,10 @@ gateway:
   host: "0.0.0.0"
   port: 8010
   default_session_id: "main"      # used only by compatible routes when the header is omitted
-  upstream_base_url: "https://api.openai.com/v1"
-  upstream_default_model: "gpt-4.1-mini"
+  upstream_base_url: "https://opencode.ai/zen/go/v1"
+  upstream_default_model: "deepseek-v4-flash"
   upstream_models:
-    - "gpt-4.1-mini"
-    - "gpt-4.1"
+    - "deepseek-v4-flash"
   # Optional prompt cache hints / 可选提示缓存参数
   # openai: send prompt_cache_key using X-Ombre-Session-Id; leave empty for other providers.
   # anthropic: send top-level cache_control for proxies that require it.
@@ -574,7 +573,7 @@ persona:
   enabled: true
   profile_id: "main_profile"
   mode: "llm"
-  base_url: "https://api.deepseek.com"
+  base_url: "https://opencode.ai/zen/go/v1"
   model: "deepseek-v4-flash"
   # Optional thinking mode override for DeepSeek v4 models:
   #   disabled = non-thinking / enabled = thinking / empty = provider default
@@ -745,8 +744,8 @@ dream:
   surface_enabled: true
   inject_enabled: false             # true lets Gateway quietly inject one resonant dream as Dream Context
   retain_after_inject: true         # keeps each surfaced dream readable while it still only injects once
-  # DeepSeek official OpenAI-compatible endpoint.
-  base_url: "https://api.deepseek.com"
+  # OpenCode Go endpoint.
+  base_url: "https://opencode.ai/zen/go/v1"
   model: "deepseek-v4-flash"
   # api_key: ""                   # OMBRE_DREAM_API_KEY overrides
   thinking_mode: "disabled"

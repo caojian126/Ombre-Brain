@@ -1,7 +1,7 @@
 # ============================================================
 # Ombre Brain Configuration / 配置文件
 # Copy this file to config.yaml and modify as needed
-# 复制此文件为 config.yaml 后按需修改
+# 复制此文件到 config.yaml 后按需修改
 # ============================================================
 
 # --- Transport / 传输方式 ---
@@ -109,7 +109,7 @@ dehydration:
   #   OMBRE_DEHYDRATION_BASE_URL
   #   OMBRE_DEHYDRATION_MODEL
   #   OMBRE_MODEL
-  max_tokens: 1024
+  max_tokens: 2048
   temperature: 0.1
 
 # --- Anchor / 长期锚点 ---
@@ -581,7 +581,7 @@ persona:
   json_response_format: true     # request provider-native JSON output for Persona evaluators
   # api_key: ""                  # Use OMBRE_PERSONA_API_KEY; falls back to OMBRE_API_KEY
   temperature: 0.1
-  max_tokens: 500
+  max_tokens: 2000
   global_decay_hours: 168
   session_mood_half_life_minutes: 90
   max_relationship_delta: 0.03
@@ -648,7 +648,7 @@ reflection:
   thinking_mode: ""               # empty = model default; disabled/enabled can force Qwen-style thinking
   # api_key: ""                   # empty = OMBRE_REFLECTION_API_KEY or embedding.api_key
   temperature: 0.1
-  max_tokens: 700
+  max_tokens: 2000
   timezone: "Asia/Shanghai"
   daily_hour: 4                   # generate daily impression after this local hour
   daily_min_memory_items: 5        # ordinary memory/update items required before daily impression writes
@@ -750,7 +750,7 @@ dream:
   # api_key: ""                   # OMBRE_DREAM_API_KEY overrides
   thinking_mode: "disabled"
   temperature: 0.85
-  max_tokens: 900
+  max_tokens: 2000
   timezone: "Asia/Shanghai"
   daily_hour: 3
   run_window_hours: 3
